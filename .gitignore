@@ -19,3 +19,4 @@ Allotment.xcodeproj/
 .claude/
 docs/
 *.md
+!README.md
