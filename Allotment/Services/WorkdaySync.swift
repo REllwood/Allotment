@@ -13,7 +13,7 @@ enum WorkdayWeekStatus: Equatable {
             self = period.isEmpty ? .empty : .notSubmitted
             return
         }
-        if submission.method == .api && submission.fingerprint.isEmpty {
+        if submission.isPartial {
             self = .partlySent(submission)
         } else if submission.fingerprint != period.fingerprint {
             self = .changedSinceSubmitted(submission)
@@ -66,7 +66,77 @@ enum WorkdayWeekStatus: Equatable {
     }
 }
 
+/// How far the Workday API connection is set up, worked out from the saved settings and the Keychain.
+///
+///     incomplete ──endpoints, client ID and client secret all filled in──▶ signedOut
+///     signedOut ──sign in, or paste a refresh token──▶ signedIn
+///     signedIn ──sign out──▶ signedOut
+///
+/// Clearing a field moves back to incomplete from either of the others.
+struct WorkdayConnection: Equatable, Sendable {
+    enum Stage: Equatable, Sendable {
+        /// Lists what still has to be filled in, in the order the setup screen shows it.
+        case incomplete(missing: [String])
+        case signedOut
+        /// `worker` is the name or ID found by the last connection test, if there has been one.
+        case signedIn(worker: String?)
+    }
+
+    var stage: Stage
+    /// Whether "Sign in with Workday" can open Workday's sign-in page, which also needs the authorization endpoint.
+    var canSignIn: Bool
+
+    init(config: WorkdayAPIConfig, hasClientSecret: Bool, hasRefreshToken: Bool) {
+        let filled = { (text: String) in !text.trimmingCharacters(in: .whitespaces).isEmpty }
+        var missing: [String] = []
+        if !filled(config.restEndpoint) { missing.append("REST API endpoint") }
+        if !filled(config.tokenEndpoint) { missing.append("token endpoint") }
+        if !filled(config.clientID) { missing.append("client ID") }
+        if !hasClientSecret { missing.append("client secret") }
+
+        if !missing.isEmpty {
+            stage = .incomplete(missing: missing)
+        } else if hasRefreshToken {
+            let worker = filled(config.workerName) ? config.workerName : filled(config.workerID) ? config.workerID : nil
+            stage = .signedIn(worker: worker)
+        } else {
+            stage = .signedOut
+        }
+        canSignIn = missing.isEmpty && filled(config.authorizationEndpoint)
+    }
+
+    var isSignedIn: Bool {
+        if case .signedIn = stage { return true }
+        return false
+    }
+
+    /// One line for the setup screen.
+    var summary: String {
+        switch stage {
+        case .incomplete(let missing):
+            "To connect, add the \(Self.list(missing))."
+        case .signedOut:
+            canSignIn ? "Ready to sign in with Workday." : "Paste a refresh token, or add the authorization endpoint to sign in with Workday."
+        case .signedIn(let worker?):
+            "Signed in as \(worker)."
+        case .signedIn(nil):
+            "Signed in. Test the connection to check it works."
+        }
+    }
+
+    private static func list(_ items: [String]) -> String {
+        guard items.count > 1, let last = items.last else { return items.first ?? "" }
+        return items.dropLast().joined(separator: ", ") + " and " + last
+    }
+}
+
 /// Runs Workday sign-in, connection tests and sending, and reports progress to the UI.
+///
+///     idle / succeeded / failed ──start sign-in, a test or a send──▶ working(progress)
+///     working ──finished──▶ succeeded(message) or failed(message, details)
+///     succeeded / failed ──dismiss──▶ idle
+///
+/// Only one operation runs at a time: starting another while working does nothing.
 @MainActor
 @Observable
 final class WorkdaySync {
@@ -74,11 +144,11 @@ final class WorkdaySync {
         case idle
         case working(String)
         case succeeded(String)
-        case failed(String)
+        /// `details` lists each time block Workday did not accept, when a send fails part way.
+        case failed(String, details: [String] = [])
     }
 
     private(set) var phase: Phase = .idle
-    private(set) var failures: [String] = []
     /// Bumped when secrets change, because the Keychain is not observable.
     private(set) var secretsRevision = 0
 
@@ -94,9 +164,19 @@ final class WorkdaySync {
         return false
     }
 
+    /// The time blocks that failed in the last send.
+    var failures: [String] {
+        if case .failed(_, let details) = phase { return details }
+        return []
+    }
+
+    func connection(for config: WorkdayAPIConfig) -> WorkdayConnection {
+        WorkdayConnection(config: config, hasClientSecret: hasSecret(.clientSecret), hasRefreshToken: hasSecret(.refreshToken))
+    }
+
     func hasSecret(_ key: SecretKey) -> Bool {
         _ = secretsRevision
-        return secrets.value(for: key)?.isEmpty == false
+        return secrets.contains(key)
     }
 
     func saveSecret(_ value: String, for key: SecretKey) {
@@ -118,6 +198,7 @@ final class WorkdaySync {
 
     /// Opens Workday's sign-in page. `authenticate` shows it and returns the callback URL.
     func signIn(store: TimeStore, authenticate: (URL) async throws -> URL) async {
+        guard !isWorking else { return }
         let state = UUID().uuidString
         phase = .working("Waiting for Workday sign-in…")
         do {
@@ -133,13 +214,19 @@ final class WorkdaySync {
             phase = .working("Finishing sign-in…")
             try await client(store).exchange(code: code)
             secretsRevision += 1
-            await testConnection(store: store)
+            await checkWorker(store: store)
         } catch {
             phase = .failed(error.localizedDescription)
         }
     }
 
     func testConnection(store: TimeStore) async {
+        guard !isWorking else { return }
+        await checkWorker(store: store)
+    }
+
+    /// Fetches the signed-in worker, which proves the connection works end to end.
+    private func checkWorker(store: TimeStore) async {
         phase = .working("Connecting to Workday…")
         do {
             let client = client(store)
@@ -162,7 +249,8 @@ final class WorkdaySync {
 
     /// Sends every time block not already accepted, one request each, and records what went through.
     func send(_ period: WorkdayPeriod, store: TimeStore) async {
-        failures = []
+        guard !isWorking else { return }
+        var rejected: [String] = []
         let existing = store.workdaySubmission(forWeekStarting: period.interval.start)
         var sent = Set(existing?.method == .api ? existing?.sentBlocks ?? [] : [])
         let blocks = period.blocks.filter { !sent.contains($0.line.blockKey(for: $0.day)) }
@@ -190,13 +278,13 @@ final class WorkdaySync {
                     try await client.postTimeBlock(request)
                     sent.insert(block.line.blockKey(for: block.day))
                 } catch let error as WorkdayError {
-                    failures.append("\(Fmt.shortDay(block.day)), \(block.line.timeCode): \(error.localizedDescription)")
+                    rejected.append("\(Fmt.shortDay(block.day)), \(block.line.timeCode): \(error.localizedDescription)")
                     // Sign-in and set-up problems will fail every block the same way, so stop early.
                     if case .http(let status, _) = error, [401, 403, 404].contains(status) { break }
                     if case .invalidTemplate = error { break }
                     if case .invalidEndpoint = error { break }
                 } catch {
-                    failures.append("\(Fmt.shortDay(block.day)), \(block.line.timeCode): \(error.localizedDescription)")
+                    rejected.append("\(Fmt.shortDay(block.day)), \(block.line.timeCode): \(error.localizedDescription)")
                 }
             }
         } catch {
@@ -206,6 +294,7 @@ final class WorkdaySync {
 
         let complete = period.blocks.allSatisfy { sent.contains($0.line.blockKey(for: $0.day)) }
         if !sent.isEmpty {
+            // An empty fingerprint marks the week as partly sent (see `WorkdaySubmission.isPartial`).
             store.recordWorkdaySubmission(WorkdaySubmission(
                 weekStart: period.interval.start, submittedAt: .now, method: .api, hours: period.total,
                 fingerprint: complete ? period.fingerprint : "", sentBlocks: Array(sent).sorted()
@@ -214,12 +303,12 @@ final class WorkdaySync {
         if complete {
             phase = .succeeded("Sent \(blocks.count) time \(blocks.count == 1 ? "block" : "blocks") to Workday. Submit the week for approval in Workday when you are ready.")
         } else {
-            phase = .failed("\(failures.count) of \(blocks.count) time blocks were not accepted. Fix the problem and send again; blocks already accepted are not sent twice.")
+            phase = .failed("\(rejected.count) of \(blocks.count) time blocks were not accepted. Fix the problem and send again. Blocks already accepted are not sent twice.",
+                            details: rejected)
         }
     }
 
     func dismissMessage() {
         if !isWorking { phase = .idle }
-        failures = []
     }
 }

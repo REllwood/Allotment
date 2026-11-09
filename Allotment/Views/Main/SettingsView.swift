@@ -4,11 +4,10 @@ import UniformTypeIdentifiers
 struct SettingsView: View {
     @Environment(TimeStore.self) private var store
     @Environment(CalendarService.self) private var calendar
-    @State private var launchAtLogin = LoginItem.isEnabled
-    @State private var loginError: String?
-    @State private var confirmErase = false
-    @State private var confirmSample = false
-    @State private var dataMessage: String?
+    @Environment(DialogPresenter.self) private var dialogs
+    @State private var loginItem = LoginItem.state
+    /// Confirms a backup or restore that worked. Failures are shown in a dialog instead.
+    @State private var dataDone: String?
 
     private static let weekdaySymbols = Calendar.current.weekdaySymbols
 
@@ -67,18 +66,15 @@ struct SettingsView: View {
                     Text("Never").tag(0)
                     ForEach([5, 10, 15, 20, 30, 45, 60], id: \.self) { Text("\($0) minutes").tag($0) }
                 }
-                Toggle("Open Allotment when you log in", isOn: $launchAtLogin)
-                    .onChange(of: launchAtLogin) { _, enabled in
-                        do {
-                            try LoginItem.set(enabled)
-                            loginError = nil
-                        } catch {
-                            loginError = error.localizedDescription
-                            launchAtLogin = LoginItem.isEnabled
-                        }
+                Toggle("Open Allotment when you log in", isOn: Binding(get: { loginItem != .off }, set: setLoginItem))
+                if loginItem == .needsApproval {
+                    HStack {
+                        Label("macOS needs you to allow this in Login Items.", systemImage: "exclamationmark.circle.fill")
+                            .foregroundStyle(.orange)
+                        Spacer()
+                        Button("Open Login Items") { LoginItem.openSystemSettings() }
                     }
-                if let loginError {
-                    Text(loginError).font(.caption).foregroundStyle(.red)
+                    .font(.callout)
                 }
             } header: {
                 Text("Tracking")
@@ -137,11 +133,13 @@ struct SettingsView: View {
                     Button("Back up…", action: exportBackup)
                     Button("Restore from backup…", action: importBackup)
                     Spacer()
-                    Button("Load sample data…") { confirmSample = true }
-                    Button("Erase all data…", role: .destructive) { confirmErase = true }
+                    Button("Load sample data…") { confirmSampleData() }
+                    Button("Erase all data…", role: .destructive) { confirmErase() }
                 }
-                if let dataMessage {
-                    Text(dataMessage).font(.caption).foregroundStyle(.secondary)
+                if let dataDone {
+                    Label(dataDone, systemImage: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             } header: {
                 Text("Your data")
@@ -152,18 +150,41 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .fadeUnderBars()
         .navigationTitle("Settings")
-        .onAppear { launchAtLogin = LoginItem.isEnabled }
-        .confirmationDialog("Erase all clients and time?", isPresented: $confirmErase) {
-            Button("Erase everything", role: .destructive) { store.eraseAllData() }
-        } message: {
-            Text("Your settings are kept. Back up first if you might want this data again.")
+        // Approval happens in System Settings, so look again whenever you come back to Allotment.
+        .onAppear { loginItem = LoginItem.state }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            loginItem = LoginItem.state
         }
-        .confirmationDialog("Replace your data with sample data?", isPresented: $confirmSample) {
-            Button("Replace with sample data", role: .destructive) { store.loadSampleData() }
-        } message: {
-            Text("This replaces every client and entry. Back up first to keep your own data.")
+    }
+
+    private func setLoginItem(_ enabled: Bool) {
+        do {
+            try LoginItem.set(enabled)
+        } catch {
+            dialogs.present(.problem(enabled ? "Allotment could not be set to open at login" : "Allotment could not be removed from login",
+                                     error: error))
         }
+        loginItem = LoginItem.state
+    }
+
+    private func confirmErase() {
+        dialogs.present(AppDialog(
+            symbol: "trash.fill", tone: .destructive,
+            title: "Erase all clients and time?",
+            message: "Your settings are kept. Back up first if you might want this data again.",
+            actions: [AppDialog.Action(title: "Erase everything", isDestructive: true) { store.eraseAllData() }]
+        ))
+    }
+
+    private func confirmSampleData() {
+        dialogs.present(AppDialog(
+            symbol: "wand.and.stars", tone: .destructive,
+            title: "Replace your data with sample data?",
+            message: "This replaces every client and entry. Back up first to keep your own data.",
+            actions: [AppDialog.Action(title: "Replace with sample data", isDestructive: true) { store.loadSampleData() }]
+        ))
     }
 
     private var orderedWeekdays: [Int] {
@@ -192,7 +213,8 @@ struct SettingsView: View {
     private var calendarSection: some View {
         @Bindable var store = store
         Section {
-            if calendar.hasAccess {
+            switch calendar.access {
+            case .granted:
                 Toggle("Ignore all-day events", isOn: $store.settings.ignoreAllDayEvents)
                 ForEach(calendar.calendars) { source in
                     Toggle(isOn: Binding(
@@ -211,11 +233,11 @@ struct SettingsView: View {
                         }
                     }
                 }
-            } else if calendar.canRequestAccess {
+            case .notAsked:
                 LabeledContent("Calendar access") {
                     Button("Connect calendar") { calendar.requestAccess() }
                 }
-            } else {
+            case .denied:
                 LabeledContent("Calendar access") {
                     HStack {
                         Text("Turned off").foregroundStyle(.secondary)
@@ -240,9 +262,10 @@ struct SettingsView: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             try store.exportBackup(to: url)
-            dataMessage = "Backed up to \(url.lastPathComponent)."
+            dataDone = "Backed up to \(url.lastPathComponent)."
         } catch {
-            dataMessage = "Backup failed: \(error.localizedDescription)"
+            dataDone = nil
+            dialogs.present(.problem("The backup could not be saved", error: error))
         }
     }
 
@@ -251,17 +274,21 @@ struct SettingsView: View {
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        let alert = NSAlert()
-        alert.messageText = "Replace your data with this backup?"
-        alert.informativeText = "Your current data is kept beside the data file as data.before-import.json."
-        alert.addButton(withTitle: "Restore")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        dialogs.present(AppDialog(
+            symbol: "clock.arrow.circlepath", tone: .warning,
+            title: "Replace your data with this backup?",
+            message: "Your current data is kept beside the data file as data.before-import.json.",
+            actions: [AppDialog.Action(title: "Restore") { restore(from: url) }]
+        ))
+    }
+
+    private func restore(from url: URL) {
         do {
             try store.importBackup(from: url)
-            dataMessage = "Restored from \(url.lastPathComponent)."
+            dataDone = "Restored from \(url.lastPathComponent)."
         } catch {
-            dataMessage = "That file could not be restored: \(error.localizedDescription)"
+            dataDone = nil
+            dialogs.present(.problem("That file could not be restored", error: error))
         }
     }
 }

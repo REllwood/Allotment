@@ -3,6 +3,7 @@ import SwiftUI
 struct MainWindow: View {
     @Environment(Router.self) private var router
     @Environment(TimeStore.self) private var store
+    @State private var dialogs = DialogPresenter()
 
     var body: some View {
         @Bindable var router = router
@@ -27,14 +28,20 @@ struct MainWindow: View {
                 }
             }
             .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
-            .safeAreaInset(edge: .bottom) {
+            .safeAreaBar(edge: .bottom) {
                 SidebarTimer()
                     .padding(10)
             }
         } detail: {
             detail
+                // No toolbar band with a hard bottom line. Each page fades its own content out under the toolbar
+                // instead, with fadeUnderBars(), because the system's soft scroll edge does not draw here.
+                .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .defaultScrollAnchor(LaunchOptions.previewScrollAnchor)
+        .appDialogHost(dialogs)
+        .environment(dialogs)
         .frame(minWidth: 960, minHeight: 620)
         .sheet(item: $router.editing) { target in
             EntryEditor(target: target)
@@ -42,6 +49,20 @@ struct MainWindow: View {
         .onAppear {
             NSApp.setActivationPolicy(.regular)
             NSApp.activate()
+            #if DEBUG
+            if LaunchOptions.previewDialog?.hasPrefix("entry") == true, let entry = store.entries.last(where: { !$0.isRunning }) {
+                router.editing = EntryEditTarget(entryID: entry.id, day: entry.start)
+            }
+            if LaunchOptions.previewDialog == "window", let client = store.clients.first {
+                dialogs.present(AppDialog(
+                    symbol: "trash.fill", tone: .destructive,
+                    title: "Delete \(client.name)?",
+                    message: "This cannot be undone.",
+                    actions: [AppDialog.Action(title: "Delete client and \(store.entries(for: client.id).count) entries", isDestructive: true) {},
+                              AppDialog.Action(title: "Archive instead") {}]
+                ))
+            }
+            #endif
         }
     }
 

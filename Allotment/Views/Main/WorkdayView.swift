@@ -8,7 +8,7 @@ struct WorkdayView: View {
     @Environment(Ticker.self) private var ticker
     @State private var weekDate = WorkdayView.defaultWeekDate()
     @State private var showSetup = LaunchOptions.opensWorkdaySetup
-    @State private var confirmSend = false
+    @Environment(DialogPresenter.self) private var dialogs
     @State private var copied: String?
 
     /// Opens on last week early in the week, when that is the one most likely to need submitting.
@@ -40,6 +40,7 @@ struct WorkdayView: View {
                     }
                     .padding(24)
                 }
+                .fadeUnderBars()
             } else {
                 WorkdayIntro(setUp: {
                     store.workday.isEnabled = true
@@ -68,13 +69,6 @@ struct WorkdayView: View {
         }
         .sheet(isPresented: $showSetup) {
             WorkdaySetupView()
-        }
-        .confirmationDialog(sendTitle(period), isPresented: $confirmSend) {
-            Button("Send to Workday") {
-                Task { await sync.send(period, store: store) }
-            }
-        } message: {
-            Text(sendMessage(period, status: status))
         }
     }
 
@@ -133,15 +127,30 @@ struct WorkdayView: View {
                 .fixedSize()
                 .help("An import sheet in the column order of Workday's Import Reported Time Blocks")
 
+                // Shown once direct sync has been started in setup. Until it is signed in, the button finishes setup
+                // instead of offering a send that would fail.
                 if store.workday.api.isConfigured {
-                    Button {
-                        confirmSend = true
-                    } label: {
-                        Label(status.needsAttention && store.workdaySubmission(forWeekStarting: period.interval.start)?.method == .api
-                              ? "Send changes" : "Send to Workday", systemImage: "paperplane.fill")
+                    switch sync.connection(for: store.workday.api).stage {
+                    case .signedIn:
+                        Button {
+                            confirmSend(period, status: status)
+                        } label: {
+                            Label(status.needsAttention && store.workdaySubmission(forWeekStarting: period.interval.start)?.method == .api
+                                  ? "Send changes" : "Send to Workday", systemImage: "paperplane.fill")
+                        }
+                        .buttonStyle(.glassProminent)
+                        .disabled(period.isEmpty || sync.isWorking || sync.pendingBlocks(in: period, store: store).isEmpty)
+                    case .signedOut:
+                        Button { showSetup = true } label: {
+                            Label("Sign in to send", systemImage: "person.crop.circle.badge.checkmark")
+                        }
+                        .help("Sign in to Workday to send this week straight from here")
+                    case .incomplete:
+                        Button { showSetup = true } label: {
+                            Label("Finish setup to send", systemImage: "slider.horizontal.3")
+                        }
+                        .help("Direct sync needs a few more details before it can send")
                     }
-                    .buttonStyle(.glassProminent)
-                    .disabled(period.isEmpty || sync.isWorking || sync.pendingBlocks(in: period, store: store).isEmpty)
                 }
 
                 Spacer()
@@ -169,8 +178,26 @@ struct WorkdayView: View {
         .cardBackground()
     }
 
+    private func confirmSend(_ period: WorkdayPeriod, status: WorkdayWeekStatus) {
+        dialogs.present(AppDialog(
+            symbol: "paperplane.fill",
+            title: sendTitle(period),
+            message: sendMessage(period, status: status),
+            actions: [AppDialog.Action(title: "Send to Workday") {
+                Task { await sync.send(period, store: store) }
+            }]
+        ))
+    }
+
     private func exportForAdmin(_ period: WorkdayPeriod, excel: Bool) {
-        guard ExportService.exportWorkday(period, excel: excel) != nil else { return }
+        let saved: URL?
+        do {
+            saved = try ExportService.exportWorkday(period, excel: excel)
+        } catch {
+            dialogs.present(.problem("The file could not be saved", error: error))
+            return
+        }
+        guard saved != nil else { return }
         if store.workdaySubmission(forWeekStarting: period.interval.start) == nil {
             store.recordWorkdaySubmission(WorkdaySubmission(
                 weekStart: period.interval.start, submittedAt: .now, method: .export,
@@ -423,28 +450,33 @@ struct SyncMessage: View {
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .cardBackground(cornerRadius: 12)
-        case .succeeded(let text), .failed(let text):
-            let failed = { if case .failed = sync.phase { return true } else { return false } }()
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline) {
-                    Label(text, systemImage: failed ? "xmark.octagon.fill" : "checkmark.circle.fill")
-                        .foregroundStyle(failed ? .red : .green)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer()
-                    Button("Dismiss") { sync.dismissMessage() }
-                        .buttonStyle(.link)
-                }
-                ForEach(sync.failures, id: \.self) { failure in
-                    Text(failure)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .cardBackground(cornerRadius: 12)
+        case .succeeded(let text):
+            outcome(text, details: [], failed: false)
+        case .failed(let text, let details):
+            outcome(text, details: details, failed: true)
         }
+    }
+
+    private func outcome(_ text: String, details: [String], failed: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Label(text, systemImage: failed ? "xmark.octagon.fill" : "checkmark.circle.fill")
+                    .foregroundStyle(failed ? .red : .green)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Button("Dismiss") { sync.dismissMessage() }
+                    .buttonStyle(.link)
+            }
+            ForEach(details, id: \.self) { detail in
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardBackground(cornerRadius: 12)
     }
 }
 
@@ -481,6 +513,7 @@ private struct WorkdayIntro: View {
             .padding(40)
             .frame(maxWidth: .infinity)
         }
+        .fadeUnderBars()
     }
 
     private func option(_ symbol: String, _ title: String, _ detail: String) -> some View {

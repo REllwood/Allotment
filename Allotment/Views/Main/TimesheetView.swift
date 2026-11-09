@@ -16,15 +16,17 @@ struct TimesheetView: View {
         let schedule = store.schedule
         let week = schedule.week(containing: router.timesheetDate)
 
-        VStack(spacing: 0) {
-            WeekStrip(week: week, selected: $router.timesheetDate)
-                .padding(.horizontal, 24)
-                .padding(.vertical, 14)
-            Divider()
+        Group {
             switch mode {
             case .day: DayEntriesList(day: schedule.day(containing: router.timesheetDate))
             case .week: WeekGrid(week: week)
             }
+        }
+        // The week strip stays pinned while the entries scroll under it and fade out.
+        .safeAreaBar(edge: .top) {
+            WeekStrip(week: week, selected: $router.timesheetDate)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 14)
         }
         .navigationTitle("Timesheet")
         .navigationSubtitle(mode == .day ? Fmt.day(router.timesheetDate) : Fmt.range(week))
@@ -143,7 +145,8 @@ private struct DayEntriesList: View {
                 }
             }
             .listStyle(.inset)
-            .safeAreaInset(edge: .bottom) {
+            .fadeUnderBars()
+            .safeAreaBar(edge: .bottom) {
                 HStack {
                     Text("\(entries.count) \(entries.count == 1 ? "entry" : "entries")")
                     Spacer()
@@ -155,7 +158,6 @@ private struct DayEntriesList: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 24)
                 .padding(.vertical, 10)
-                .background(.bar)
             }
         }
     }
@@ -349,6 +351,7 @@ private struct WeekGrid: View {
                 }
                 .padding(24)
             }
+            .fadeUnderBars()
         }
     }
 

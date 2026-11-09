@@ -89,6 +89,33 @@ enum LaunchOptions {
     /// Opens Workday setup straight away, with `--section workday`.
     static var opensWorkdaySetup: Bool { arguments.contains("--workday-setup") }
 
+    #if DEBUG
+    /// Development builds only, with `--demo`: `--preview-dialog window` opens a sample dialog in the main window,
+    /// `--preview-dialog away` opens the prompt about time spent away from the Mac, `--preview-dialog entry` opens
+    /// the entry editor, and `--preview-dialog entry-delete` opens it with its delete confirmation showing.
+    static var previewDialog: String? {
+        guard isDemo, let index = arguments.firstIndex(of: "--preview-dialog"), index + 1 < arguments.count else { return nil }
+        return arguments[index + 1]
+    }
+
+    /// Development builds only, with `--demo`: `--preview-scrolled` opens every page scrolled to the bottom,
+    /// to check how content looks where it passes under the toolbar.
+    static var previewsScrolled: Bool { isDemo && arguments.contains("--preview-scrolled") }
+
+    /// Development builds only: `--state-report` prints where every state machine stands, then quits.
+    /// Add `--demo` to report on sample data instead of your own.
+    static var printsStateReport: Bool { arguments.contains("--state-report") }
+    #endif
+
+    /// Where scroll views start: the bottom with `--preview-scrolled` in development builds, otherwise the default.
+    static var previewScrollAnchor: UnitPoint? {
+        #if DEBUG
+        previewsScrolled ? .bottom : nil
+        #else
+        nil
+        #endif
+    }
+
     /// `--section reports` opens the main window on that page.
     static var section: SidebarItem? {
         guard let index = arguments.firstIndex(of: "--section"), index + 1 < arguments.count else { return nil }
@@ -181,6 +208,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let store = Self.store {
             idleMonitor = IdleMonitor(store: store)
             idleMonitor?.start()
+            #if DEBUG
+            if LaunchOptions.printsStateReport {
+                let sync = WorkdaySync(secrets: LaunchOptions.usesMemoryOnly ? MemorySecretStore() : KeychainSecretStore())
+                let report = StateReport.lines(store: store, calendar: CalendarService(), sync: sync, away: idleMonitor?.state)
+                print(report.joined(separator: "\n"))
+                fflush(stdout)
+                exit(0)
+            }
+            if LaunchOptions.previewDialog == "away" { idleMonitor?.previewPrompt() }
+            #endif
         }
         windowObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { _ in
             // The closing window is still visible during this notification, so check on the next turn.

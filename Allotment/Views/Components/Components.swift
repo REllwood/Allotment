@@ -292,3 +292,82 @@ struct ColorSwatchPicker: View {
         }
     }
 }
+
+/// Fades a scroll view's content out at the top or bottom while there is more to scroll that way, so rows
+/// never stop at a hard line. At rest at the top nothing is faded. For scroll areas without a system bar
+/// over them. Scroll areas under the toolbar or a safe area bar use the system's soft scroll edge effect.
+struct SoftScrollEdges: ViewModifier {
+    var length: CGFloat = 16
+    @State private var edges = HiddenEdges()
+
+    private struct HiddenEdges: Equatable {
+        var top = false
+        var bottom = false
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .onScrollGeometryChange(for: HiddenEdges.self) { geometry in
+                HiddenEdges(top: geometry.visibleRect.minY > 0.5,
+                            bottom: geometry.visibleRect.maxY < geometry.contentSize.height - 0.5)
+            } action: { _, newValue in
+                withAnimation(.easeOut(duration: 0.15)) { edges = newValue }
+            }
+            .mask {
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [.black.opacity(edges.top ? 0 : 1), .black], startPoint: .top, endPoint: .bottom)
+                        .frame(height: length)
+                    Rectangle()
+                    LinearGradient(colors: [.black, .black.opacity(edges.bottom ? 0 : 1)], startPoint: .top, endPoint: .bottom)
+                        .frame(height: length)
+                }
+            }
+    }
+}
+
+extension View {
+    func softScrollEdges(length: CGFloat = 16) -> some View {
+        modifier(SoftScrollEdges(length: length))
+    }
+}
+
+/// Fades scrolling content out as it passes under the toolbar or a pinned bar, so it never stops at a hard
+/// edge. Content is clear under the bar and fades in over `length` points below it. Pages start at least that
+/// far below the bar, so nothing is covered at rest. Used in the main window, where the system's soft scroll
+/// edge effect does not draw under the toolbar.
+///
+/// A scroll view's frame stops at the bar while its content keeps drawing underneath, so the bar's height is
+/// the gap between the scroll view's frame and the mask, which reaches out to the window's edges.
+struct FadeUnderBars: ViewModifier {
+    var edges: VerticalEdge.Set = .all
+    var length: CGFloat = 12
+    @State private var frame: CGRect = .zero
+
+    func body(content: Content) -> some View {
+        content
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame = $0 }
+            .mask {
+                GeometryReader { proxy in
+                    let outer = proxy.frame(in: .global)
+                    let top = edges.contains(.top) ? max(0, frame.minY - outer.minY) : 0
+                    let bottom = edges.contains(.bottom) ? max(0, outer.maxY - frame.maxY) : 0
+                    VStack(spacing: 0) {
+                        Color.clear.frame(height: top)
+                        LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                            .frame(height: top > 0 ? length : 0)
+                        Color.black
+                        LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                            .frame(height: bottom > 0 ? length : 0)
+                        Color.clear.frame(height: bottom)
+                    }
+                }
+                .ignoresSafeArea()
+            }
+    }
+}
+
+extension View {
+    func fadeUnderBars(edges: VerticalEdge.Set = .all, length: CGFloat = 12) -> some View {
+        modifier(FadeUnderBars(edges: edges, length: length))
+    }
+}

@@ -18,6 +18,7 @@ struct ClientsView: View {
                 }
             }
             .listStyle(.inset)
+            .fadeUnderBars()
             .frame(width: 260)
             .overlay {
                 if clients.isEmpty {
@@ -103,8 +104,8 @@ private struct ClientDetail: View {
     let clientID: UUID
     let onDelete: () -> Void
     @Environment(TimeStore.self) private var store
+    @Environment(DialogPresenter.self) private var dialogs
     @State private var keywordsText = ""
-    @State private var confirmDelete = false
 
     private var client: Binding<Client> {
         Binding(
@@ -207,7 +208,7 @@ private struct ClientDetail: View {
             }
 
             Section {
-                Button("Delete client…", role: .destructive) { confirmDelete = true }
+                Button("Delete client…", role: .destructive) { confirmDelete(entryCount: entryCount) }
             } footer: {
                 Text(entryCount > 0 ? "Deleting also removes \(entryCount) time entries. Archive the client instead to keep their history." : "")
                     .font(.caption)
@@ -215,20 +216,32 @@ private struct ClientDetail: View {
             }
         }
         .formStyle(.grouped)
+        .fadeUnderBars()
         .onAppear {
             keywordsText = client.wrappedValue.matchKeywords.joined(separator: ", ")
         }
-        .confirmationDialog("Delete \(client.wrappedValue.name)?", isPresented: $confirmDelete) {
-            Button("Delete client and \(entryCount) entries", role: .destructive) {
-                store.deleteClient(clientID)
-                onDelete()
-            }
-            if !client.wrappedValue.isArchived {
-                Button("Archive instead") { client.wrappedValue.isArchived = true }
-            }
-        } message: {
-            Text("This cannot be undone.")
+    }
+
+    private func confirmDelete(entryCount: Int) {
+        let current = client.wrappedValue
+        let deleteTitle = switch entryCount {
+        case 0: "Delete client"
+        case 1: "Delete client and 1 entry"
+        default: "Delete client and \(entryCount) entries"
         }
+        var actions = [AppDialog.Action(title: deleteTitle, isDestructive: true) {
+            store.deleteClient(clientID)
+            onDelete()
+        }]
+        if !current.isArchived {
+            actions.append(AppDialog.Action(title: "Archive instead") { client.wrappedValue.isArchived = true })
+        }
+        dialogs.present(AppDialog(
+            symbol: "trash.fill", tone: .destructive,
+            title: "Delete \(current.name)?",
+            message: "This cannot be undone.",
+            actions: actions
+        ))
     }
 
     private func saveKeywords() {

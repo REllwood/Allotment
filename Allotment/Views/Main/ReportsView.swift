@@ -41,6 +41,7 @@ struct ReportsView: View {
     }
 
     @Environment(TimeStore.self) private var store
+    @Environment(DialogPresenter.self) private var dialogs
     @State private var preset: RangePreset = .thisMonth
     @State private var customStart = Calendar.current.date(byAdding: .day, value: -13, to: .now) ?? .now
     @State private var customEnd = Date.now
@@ -90,6 +91,7 @@ struct ReportsView: View {
             }
             .padding(24)
         }
+        .fadeUnderBars()
         .navigationTitle("Reports")
         .navigationSubtitle(Fmt.range(filter.interval))
         .toolbar {
@@ -97,7 +99,7 @@ struct ReportsView: View {
                 Menu {
                     ForEach(ExportFormat.allCases) { format in
                         Button {
-                            ExportService.export(ReportBuilder.build(filter, store: store), as: format)
+                            exporting { try ExportService.export(ReportBuilder.build(filter, store: store), as: format) }
                         } label: {
                             Label(format.title, systemImage: format.symbol)
                         }
@@ -105,12 +107,12 @@ struct ReportsView: View {
                     if store.workday.isEnabled {
                         Section("For Workday") {
                             Button {
-                                ExportService.exportWorkday(WorkdayBuilder.build(filter.interval, store: store), excel: true)
+                                exporting { try ExportService.exportWorkday(WorkdayBuilder.build(filter.interval, store: store), excel: true) }
                             } label: {
                                 Label("Workday import sheet (.xlsx)", systemImage: "briefcase")
                             }
                             Button {
-                                ExportService.exportWorkday(WorkdayBuilder.build(filter.interval, store: store), excel: false)
+                                exporting { try ExportService.exportWorkday(WorkdayBuilder.build(filter.interval, store: store), excel: false) }
                             } label: {
                                 Label("Workday import sheet (.csv)", systemImage: "briefcase")
                             }
@@ -121,6 +123,14 @@ struct ReportsView: View {
                 }
                 .help("Export this report as Excel, PDF or CSV")
             }
+        }
+    }
+
+    private func exporting(_ export: () throws -> URL?) {
+        do {
+            _ = try export()
+        } catch {
+            dialogs.present(.problem("The file could not be saved", error: error))
         }
     }
 

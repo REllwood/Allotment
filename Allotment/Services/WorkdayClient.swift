@@ -279,6 +279,14 @@ enum SecretKey: String, CaseIterable {
 protocol SecretStore {
     func value(for key: SecretKey) -> String?
     func set(_ value: String?, for key: SecretKey)
+    /// Whether a secret is saved, without reading it.
+    func contains(_ key: SecretKey) -> Bool
+}
+
+extension SecretStore {
+    func contains(_ key: SecretKey) -> Bool {
+        value(for: key)?.isEmpty == false
+    }
 }
 
 /// Stores Workday secrets in the login Keychain.
@@ -288,6 +296,15 @@ struct KeychainSecretStore: SecretStore {
 
     private func query(_ key: SecretKey) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: key.rawValue]
+    }
+
+    /// Asks only for the item's attributes, so checking whether a secret exists never unlocks it.
+    func contains(_ key: SecretKey) -> Bool {
+        var request = query(key)
+        request[kSecReturnAttributes as String] = true
+        request[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: AnyObject?
+        return SecItemCopyMatching(request as CFDictionary, &result) == errSecSuccess
     }
 
     func value(for key: SecretKey) -> String? {

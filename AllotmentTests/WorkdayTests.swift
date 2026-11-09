@@ -292,7 +292,7 @@ struct WorkdaySyncTests {
         #expect(sync.failures.count == failedCount)
         #expect(sync.failures.first?.contains("Day is locked") == true)
         let partial = try #require(store.workdaySubmission(forWeekStarting: period.interval.start))
-        #expect(partial.fingerprint.isEmpty)
+        #expect(partial.isPartial)
         #expect(partial.sentBlocks.count == period.blocks.count - failedCount)
 
         FakeWorkday.requests = []
@@ -300,13 +300,24 @@ struct WorkdaySyncTests {
         await sync.send(period, store: store)
         #expect(FakeWorkday.requests.filter { $0.url?.path().hasSuffix("/timeBlocks") == true }.count == failedCount)
         #expect(store.workdaySubmission(forWeekStarting: period.interval.start)?.fingerprint == period.fingerprint)
+        #expect(store.workdaySubmission(forWeekStarting: period.interval.start)?.isPartial == false)
+    }
+
+    @Test func dismissingAFailureClearsItsDetails() async throws {
+        let (sync, store, _, period) = makeSync()
+        FakeWorkday.failingDate = Fmt.isoDay(try #require(period.blocks.first?.day))
+        await sync.send(period, store: store)
+        #expect(!sync.failures.isEmpty)
+        sync.dismissMessage()
+        #expect(sync.phase == .idle)
+        #expect(sync.failures.isEmpty)
     }
 
     @Test func missingSecretsStopBeforeAnyRequest() async {
         let (sync, store, secrets, period) = makeSync()
         secrets.set(nil, for: .refreshToken)
         await sync.send(period, store: store)
-        guard case .failed(let message) = sync.phase else {
+        guard case .failed(let message, _) = sync.phase else {
             Issue.record("Expected a failure")
             return
         }

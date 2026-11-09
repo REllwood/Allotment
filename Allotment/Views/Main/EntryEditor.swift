@@ -11,40 +11,76 @@ struct EntryEditor: View {
     @State private var startTime = Date.now
     @State private var endTime = Date.now
     @State private var durationText = ""
+    /// Whether the entry is saved as a running timer, with no end time. Only offered for a timer that is running.
     @State private var isRunning = false
-    @State private var isNew = true
-    @State private var billableTouched = false
-    @State private var loaded = false
-    @State private var confirmDelete = false
+    @State private var mode = Mode.loading
+    @State private var billable = BillableChoice.automatic
+    @State private var dialogs = DialogPresenter()
+
+    /// What the editor is doing.
+    ///
+    ///     loading ──the entry is found──▶ editing
+    ///     loading ──no entry, or a new one──▶ adding
+    private enum Mode {
+        case loading
+        case adding
+        case editing
+    }
+
+    /// Who decides whether the entry is billable.
+    ///
+    ///     automatic ──you flip the Billable switch──▶ chosen
+    ///
+    /// While automatic, it follows the client, project and activity you pick. Existing entries start as chosen,
+    /// so opening one never changes how it was billed.
+    private enum BillableChoice {
+        case automatic
+        case chosen
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if loaded { form } else { ProgressView().frame(height: 300) }
-            Divider()
-            HStack {
-                if !isNew {
-                    Button("Delete", role: .destructive) { confirmDelete = true }
-                }
-                Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                Button(isNew ? "Add entry" : "Save") { save() }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.glassProminent)
-                    .disabled(!isValid)
-            }
-            .padding(16)
+        Group {
+            if mode == .loading { ProgressView().frame(height: 300) } else { form }
         }
+        // The form scrolls under the buttons and fades out beneath them.
+        .safeAreaBar(edge: .bottom) { buttonBar }
+        .scrollEdgeEffectStyle(.soft, for: .all)
         .frame(width: 480)
-        .task { if !loaded { load() } }
-        .confirmationDialog("Delete this entry?", isPresented: $confirmDelete) {
-            Button("Delete entry", role: .destructive) {
+        .appDialogHost(dialogs)
+        .task {
+            if mode == .loading { load() }
+            #if DEBUG
+            if LaunchOptions.previewDialog == "entry-delete" { confirmDelete() }
+            #endif
+        }
+    }
+
+    private var buttonBar: some View {
+        HStack {
+            if mode == .editing {
+                Button("Delete", role: .destructive) { confirmDelete() }
+            }
+            Spacer()
+            Button("Cancel", role: .cancel) { dismiss() }
+                .keyboardShortcut(.cancelAction)
+            Button(mode == .adding ? "Add entry" : "Save") { save() }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.glassProminent)
+                .disabled(!isValid)
+        }
+        .padding(16)
+    }
+
+    private func confirmDelete() {
+        dialogs.present(AppDialog(
+            symbol: "trash.fill", tone: .destructive,
+            title: "Delete this entry?",
+            message: "This removes \(Fmt.hm(draft.duration())) from your timesheet.",
+            actions: [AppDialog.Action(title: "Delete entry", isDestructive: true) {
                 store.deleteEntry(draft.id)
                 dismiss()
-            }
-        } message: {
-            Text("This removes \(Fmt.hm(draft.duration())) from your timesheet.")
-        }
+            }]
+        ))
     }
 
     private var form: some View {
@@ -119,7 +155,7 @@ struct EntryEditor: View {
             Section {
                 Toggle("Billable", isOn: Binding(
                     get: { draft.isBillable },
-                    set: { draft.isBillable = $0; billableTouched = true }
+                    set: { draft.isBillable = $0; billable = .chosen }
                 ))
                 if draft.source == .calendar {
                     LabeledContent("Source", value: "Logged from your calendar")
@@ -167,7 +203,7 @@ struct EntryEditor: View {
     }
 
     private func refreshBillable() {
-        guard !billableTouched else { return }
+        guard billable == .automatic else { return }
         draft.isBillable = store.defaultBillable(clientID: draft.clientID, projectID: draft.projectID, activityID: draft.activityID)
     }
 
@@ -176,9 +212,9 @@ struct EntryEditor: View {
     private func load() {
         if let id = target.entryID, let entry = store.entry(id) {
             draft = entry
-            isNew = false
+            mode = .editing
             isRunning = entry.isRunning
-            billableTouched = true
+            billable = .chosen
             day = entry.start
             startTime = entry.start
             endTime = entry.end ?? .now
@@ -195,9 +231,9 @@ struct EntryEditor: View {
             day = rounded
             startTime = rounded
             endTime = rounded.addingTimeInterval(3600)
+            mode = .adding
         }
         syncDurationText()
-        loaded = true
     }
 
     private func save() {

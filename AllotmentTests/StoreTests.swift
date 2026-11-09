@@ -52,7 +52,7 @@ struct StoreTests {
         let reloaded = TimeStore(fileURL: url)
         #expect(reloaded.clients.map(\.name) == ["Acme"])
         #expect(reloaded.entries.first?.notes == "Kick-off")
-        #expect(reloaded.storageProblem == nil)
+        #expect(reloaded.storage == .healthy)
     }
 
     @Test func olderFilesWithMissingFieldsStillLoad() throws {
@@ -76,8 +76,43 @@ struct StoreTests {
         let url = folder.appending(path: "data.json")
         try Data("not json".utf8).write(to: url)
         let store = TimeStore(fileURL: url)
-        #expect(store.storageProblem != nil)
-        #expect(FileManager.default.fileExists(atPath: folder.appending(path: "data.unreadable.json").path))
+        let kept = folder.appending(path: "data.unreadable.json")
+        guard case .couldNotRead(_, let keptAs) = store.storage else {
+            Issue.record("Expected a read problem, got \(store.storage)")
+            return
+        }
+        #expect(keptAs.lastPathComponent == kept.lastPathComponent)
+        #expect(FileManager.default.fileExists(atPath: kept.path))
+
+        // Saving works again, so the read problem stays until it is dismissed.
+        _ = store.newClient(named: "Acme")
+        store.saveNow()
+        #expect(store.storage != .healthy)
+        store.dismissStorageProblem()
+        #expect(store.storage == .healthy)
+    }
+
+    @Test func saveProblemsClearWhenSavingWorksAgain() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "store-blocked-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        // A file where the data folder should be, so creating the folder fails.
+        let blocker = folder.appending(path: "Allotment")
+        try Data().write(to: blocker)
+        let store = TimeStore(fileURL: blocker.appending(path: "data.json"))
+        _ = store.newClient(named: "Acme")
+        store.saveNow()
+        guard case .couldNotSave = store.storage else {
+            Issue.record("Expected a save problem, got \(store.storage)")
+            return
+        }
+        // Dismissing is only for read problems. A save problem goes away by saving.
+        store.dismissStorageProblem()
+        #expect(store.storage != .healthy)
+
+        try FileManager.default.removeItem(at: blocker)
+        store.saveNow()
+        #expect(store.storage == .healthy)
     }
 
     @Test func sampleDataIsRepeatable() {

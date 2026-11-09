@@ -61,6 +61,7 @@ struct OverviewView: View {
             }
             .padding(24)
         }
+        .fadeUnderBars()
         .navigationTitle("Overview")
         .toolbar {
             ToolbarItem {

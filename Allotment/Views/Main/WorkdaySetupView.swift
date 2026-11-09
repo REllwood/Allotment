@@ -13,85 +13,85 @@ struct WorkdaySetupView: View {
 
     var body: some View {
         @Bindable var store = store
-        VStack(spacing: 0) {
-            Form {
-                Section {
-                    Toggle("Use Workday", isOn: $store.workday.isEnabled)
-                    TextField("Employee ID", text: $store.workday.employeeID, prompt: Text("Used in import sheets, such as 21004"))
-                    TextField("Default time entry code", text: $store.workday.defaultTimeCode, prompt: Text("Such as Regular_Hours"))
-                    Picker("Round each day to", selection: $store.workday.incrementHours) {
-                        ForEach(WorkdayConfig.increments, id: \.hours) { Text($0.title).tag($0.hours) }
-                    }
-                    Picker("Comment on each day", selection: $store.workday.commentStyle) {
-                        ForEach(WorkdayCommentStyle.allCases) { Text($0.title).tag($0) }
-                    }
-                } header: {
-                    Text("Basics")
-                } footer: {
-                    Text("Use the reference IDs your Workday tenant shows for time entry codes and projects. Ask your Workday admin if you are not sure which to use.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+        Form {
+            Section {
+                Toggle("Use Workday", isOn: $store.workday.isEnabled)
+                TextField("Employee ID", text: $store.workday.employeeID, prompt: Text("Used in import sheets, such as 21004"))
+                TextField("Default time entry code", text: $store.workday.defaultTimeCode, prompt: Text("Such as Regular_Hours"))
+                Picker("Round each day to", selection: $store.workday.incrementHours) {
+                    ForEach(WorkdayConfig.increments, id: \.hours) { Text($0.title).tag($0.hours) }
                 }
-
-                Section {
-                    ForEach(store.activities) { activity in
-                        LabeledContent {
-                            TextField("Code", text: activityCode(activity.id), prompt: Text(store.workday.defaultTimeCode.isEmpty ? "Time entry code" : store.workday.defaultTimeCode))
-                                .labelsHidden()
-                                .frame(width: 240)
-                        } label: {
-                            Label(activity.name, systemImage: activity.symbol)
-                        }
-                    }
-                } header: {
-                    Text("Activities and time entry codes")
-                } footer: {
-                    Text("Leave a code empty to use the default. For example, Admin might go to Internal_Admin and everything else to Regular_Hours.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                Picker("Comment on each day", selection: $store.workday.commentStyle) {
+                    ForEach(WorkdayCommentStyle.allCases) { Text($0.title).tag($0) }
                 }
-
-                Section {
-                    ForEach(store.activeClients) { client in
-                        LabeledContent {
-                            TextField("Project", text: clientProject(client.id), prompt: Text("Workday project"))
-                                .labelsHidden()
-                                .frame(width: 240)
-                        } label: {
-                            HStack(spacing: 8) {
-                                ClientDot(color: Color(hex: client.colorHex))
-                                Text(client.name).fontWeight(.medium)
-                            }
-                        }
-                        ForEach(store.projects(for: client.id)) { project in
-                            LabeledContent {
-                                HStack(spacing: 6) {
-                                    TextField("Project", text: projectCode(project.id, \.project), prompt: Text("Same as client"))
-                                        .labelsHidden()
-                                    TextField("Task", text: projectCode(project.id, \.task), prompt: Text("Task or phase"))
-                                        .labelsHidden()
-                                }
-                                .frame(width: 240)
-                            } label: {
-                                Text(project.name)
-                                    .foregroundStyle(.secondary)
-                                    .padding(.leading, 18)
-                            }
-                        }
-                    }
-                } header: {
-                    Text("Clients, projects and Workday projects")
-                } footer: {
-                    Text("An Allotment project can point at its own Workday project and task, otherwise its client's Workday project is used.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                connectionSection
+            } header: {
+                Text("Basics")
+            } footer: {
+                Text("Use the reference IDs your Workday tenant shows for time entry codes and projects. Ask your Workday admin if you are not sure which to use.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .formStyle(.grouped)
 
-            Divider()
+            Section {
+                ForEach(store.activities) { activity in
+                    LabeledContent {
+                        TextField("Code", text: activityCode(activity.id), prompt: Text(store.workday.defaultTimeCode.isEmpty ? "Time entry code" : store.workday.defaultTimeCode))
+                            .labelsHidden()
+                            .frame(width: 240)
+                    } label: {
+                        Label(activity.name, systemImage: activity.symbol)
+                    }
+                }
+            } header: {
+                Text("Activities and time entry codes")
+            } footer: {
+                Text("Leave a code empty to use the default. For example, Admin might go to Internal_Admin and everything else to Regular_Hours.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                ForEach(store.activeClients) { client in
+                    LabeledContent {
+                        TextField("Project", text: clientProject(client.id), prompt: Text("Workday project"))
+                            .labelsHidden()
+                            .frame(width: 240)
+                    } label: {
+                        HStack(spacing: 8) {
+                            ClientDot(color: Color(hex: client.colorHex))
+                            Text(client.name).fontWeight(.medium)
+                        }
+                    }
+                    ForEach(store.projects(for: client.id)) { project in
+                        LabeledContent {
+                            HStack(spacing: 6) {
+                                TextField("Project", text: projectCode(project.id, \.project), prompt: Text("Same as client"))
+                                    .labelsHidden()
+                                TextField("Task", text: projectCode(project.id, \.task), prompt: Text("Task or phase"))
+                                    .labelsHidden()
+                            }
+                            .frame(width: 240)
+                        } label: {
+                            Text(project.name)
+                                .foregroundStyle(.secondary)
+                                .padding(.leading, 18)
+                        }
+                    }
+                }
+            } header: {
+                Text("Clients, projects and Workday projects")
+            } footer: {
+                Text("An Allotment project can point at its own Workday project and task, otherwise its client's Workday project is used.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            connectionSection
+        }
+        .formStyle(.grouped)
+        .defaultScrollAnchor(LaunchOptions.previewScrollAnchor)
+        // The form scrolls under the Done bar and fades out beneath it.
+        .safeAreaBar(edge: .bottom) {
             HStack {
                 Text("Changes are saved as you type.")
                     .font(.caption)
@@ -103,6 +103,7 @@ struct WorkdaySetupView: View {
             }
             .padding(16)
         }
+        .scrollEdgeEffectStyle(.soft, for: .all)
         .frame(width: 700, height: 580)
     }
 
@@ -111,6 +112,7 @@ struct WorkdaySetupView: View {
     @ViewBuilder
     private var connectionSection: some View {
         @Bindable var store = store
+        let connection = sync.connection(for: store.workday.api)
         Section {
             TextField("REST API endpoint", text: $store.workday.api.restEndpoint,
                       prompt: Text("https://wd2-impl-services1.workday.com/ccx/api/v1/tenant"))
@@ -131,21 +133,18 @@ struct WorkdaySetupView: View {
                         }
                     }
                 }
-                .disabled(sync.isWorking || store.workday.api.authorizationEndpoint.isEmpty || !store.workday.api.isConfigured
-                          || !sync.hasSecret(.clientSecret))
+                .disabled(sync.isWorking || !connection.canSignIn)
                 Button("Test connection") {
                     Task { await sync.testConnection(store: store) }
                 }
-                .disabled(sync.isWorking || !store.workday.api.isConfigured)
+                .disabled(sync.isWorking || !connection.isSignedIn)
                 Spacer()
-                if sync.hasSecret(.refreshToken) {
+                if connection.isSignedIn {
                     Button("Sign out", role: .destructive) { sync.forgetSignIn(store: store) }
                         .buttonStyle(.link)
                 }
             }
-            if !store.workday.api.workerID.isEmpty {
-                LabeledContent("Signed in as", value: store.workday.api.workerName.isEmpty ? store.workday.api.workerID : store.workday.api.workerName)
-            }
+            ConnectionStatus(connection: connection)
             SyncMessage()
 
             DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
@@ -233,5 +232,25 @@ struct WorkdaySetupView: View {
                 store.workday.projectCodes[id.uuidString] = code.project.isEmpty && code.task.isEmpty ? nil : code
             }
         )
+    }
+}
+
+/// Where the direct sync connection stands, in one line.
+private struct ConnectionStatus: View {
+    let connection: WorkdayConnection
+
+    var body: some View {
+        let (symbol, tint): (String, Color) = switch connection.stage {
+        case .incomplete: ("circle.dashed", .secondary)
+        case .signedOut: ("person.crop.circle.badge.questionmark", .orange)
+        case .signedIn: ("checkmark.circle.fill", .green)
+        }
+        Label {
+            Text(connection.summary)
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: symbol).foregroundStyle(tint)
+        }
+        .font(.callout)
     }
 }

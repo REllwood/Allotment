@@ -12,7 +12,7 @@ struct CalendarImportView: View {
 
     var body: some View {
         Group {
-            if calendar.hasAccess {
+            if calendar.access == .granted {
                 eventList
             } else {
                 accessPrompt
@@ -28,7 +28,7 @@ struct CalendarImportView: View {
                 Button { shift(1) } label: { Image(systemName: "chevron.right") }
                     .help("Next day")
             }
-            if calendar.hasAccess {
+            if calendar.access == .granted {
                 ToolbarItem {
                     Toggle(isOn: $showDismissed) {
                         Label("Show skipped", systemImage: "eye")
@@ -72,21 +72,19 @@ struct CalendarImportView: View {
                     CalendarEventLine(
                         event: event,
                         client: client(for: event),
-                        isLogged: logged.contains(event.id),
-                        isDismissed: dismissed.contains(event.id),
-                        now: ticker.now,
+                        state: CalendarEventState(event: event, at: ticker.now, logged: logged, skipped: dismissed),
                         chooseClient: { overrides[event.id] = .some($0) }
                     )
                 }
             }
             .listStyle(.inset)
-            .safeAreaInset(edge: .bottom) {
+            .fadeUnderBars()
+            .safeAreaBar(edge: .bottom) {
                 Text("Events are matched to clients by name, keywords and attendee email domains. Set keywords on each client.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
                     .padding(10)
-                    .background(.bar)
             }
         }
     }
@@ -102,7 +100,7 @@ struct CalendarImportView: View {
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 520)
-            if calendar.canRequestAccess {
+            if calendar.access == .notAsked {
                 Button("Connect calendar") { calendar.requestAccess() }
                     .buttonStyle(.glassProminent)
                     .controlSize(.large)
@@ -126,8 +124,10 @@ struct CalendarImportView: View {
 
     private func logAllMatched() {
         let logged = store.loggedEventKeys
-        let dismissed = store.dismissedEventKeys
-        for event in events where event.end <= .now && !event.isDeclined && !logged.contains(event.id) && !dismissed.contains(event.id) {
+        let skipped = store.dismissedEventKeys
+        let now = Date.now
+        for event in events where !event.isDeclined
+            && CalendarEventState(event: event, at: now, logged: logged, skipped: skipped) == .finished {
             if let client = client(for: event) {
                 store.logEvent(event, clientID: client.id)
             }
@@ -138,9 +138,7 @@ struct CalendarImportView: View {
 private struct CalendarEventLine: View {
     let event: CalendarEvent
     let client: Client?
-    let isLogged: Bool
-    let isDismissed: Bool
-    let now: Date
+    let state: CalendarEventState
     let chooseClient: (UUID?) -> Void
     @Environment(TimeStore.self) private var store
 
@@ -179,19 +177,20 @@ private struct CalendarEventLine: View {
                 }
             }
             .fixedSize()
-            .disabled(isLogged)
+            .disabled(state == .logged)
 
             Group {
-                if isLogged {
+                switch state {
+                case .logged:
                     Label("Logged", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
-                } else if isDismissed {
+                case .skipped:
                     Button("Restore") { store.restoreEvent(event.id) }
-                } else {
+                case .upcoming, .happening, .finished:
                     Button("Log") { withAnimation { store.logEvent(event, clientID: client?.id) } }
                         .buttonStyle(.glassProminent)
-                        .disabled(event.start > now)
-                        .help(event.start > now ? "This event has not started yet" : "Add \(Fmt.hm(event.duration)) to your timesheet")
+                        .disabled(!state.canLog)
+                        .help(state.canLog ? "Add \(Fmt.hm(event.duration)) to your timesheet" : "This event has not started yet")
                     Button("Skip") { withAnimation { store.dismissEvent(event.id) } }
                         .help("Hide this event and do not log it")
                 }
@@ -199,6 +198,6 @@ private struct CalendarEventLine: View {
             .frame(minWidth: 70, alignment: .trailing)
         }
         .padding(.vertical, 4)
-        .opacity(isDismissed ? 0.5 : 1)
+        .opacity(state == .skipped ? 0.5 : 1)
     }
 }
