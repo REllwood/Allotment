@@ -10,12 +10,7 @@ struct MenuBarPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if let problem = store.storageProblem {
-                Label(problem, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            StorageNotice()
 
             if store.clients.isEmpty {
                 WelcomeCard(open: open)
@@ -69,6 +64,34 @@ struct MenuBarPanel: View {
         dismiss()
         openWindow(id: AppWindow.main)
         NSApp.activate()
+    }
+}
+
+/// Says when the data file could not be read or saved, with the one thing you can do about it.
+private struct StorageNotice: View {
+    @Environment(TimeStore.self) private var store
+
+    var body: some View {
+        if let message = store.storage.message {
+            VStack(alignment: .leading, spacing: 4) {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 14) {
+                    switch store.storage {
+                    case .couldNotRead(_, let keptAs):
+                        Button("Show the file") { NSWorkspace.shared.activateFileViewerSelecting([keptAs]) }
+                        Button("Dismiss") { store.dismissStorageProblem() }
+                    case .couldNotSave:
+                        Button("Try again") { store.saveNow() }
+                    case .healthy:
+                        EmptyView()
+                    }
+                }
+                .buttonStyle(.link)
+            }
+            .font(.caption)
+        }
     }
 }
 
@@ -492,13 +515,14 @@ private struct PanelNoticeRow: View {
         let now = ticker.minute
         var finishedMeetings: [CalendarEvent] = []
 
-        if calendar.hasAccess {
+        if calendar.access == .granted {
             let _ = calendar.revision
             let logged = store.loggedEventKeys
-            let dismissed = store.dismissedEventKeys
+            let skipped = store.dismissedEventKeys
             let events = calendar.events(in: store.schedule.day(containing: now), settings: store.settings)
-                .filter { !logged.contains($0.id) && !dismissed.contains($0.id) && !$0.isDeclined && !$0.isAllDay }
-            if let meeting = events.first(where: { $0.isHappening(at: now) }), store.runningEntry?.notes != meeting.title {
+                .filter { !$0.isDeclined && !$0.isAllDay }
+            let state = { (event: CalendarEvent) in CalendarEventState(event: event, at: now, logged: logged, skipped: skipped) }
+            if let meeting = events.first(where: { state($0) == .happening }), store.runningEntry?.notes != meeting.title {
                 let client = EventMatcher.client(for: meeting, in: store.activeClients)
                 return Notice(symbol: "person.2.fill", tint: .accentColor, title: meeting.title,
                               detail: "On now until \(Fmt.time(meeting.end))\(client.map { " · \($0.name)" } ?? "")",
@@ -506,7 +530,7 @@ private struct PanelNoticeRow: View {
                     _ = store.startTimer(clientID: client?.id, activityID: store.meetingActivity?.id, notes: meeting.title)
                 }
             }
-            finishedMeetings = events.filter { $0.end <= now }
+            finishedMeetings = events.filter { state($0) == .finished }
         }
 
         let forecasts = ForecastEngine(store: store)
@@ -543,7 +567,7 @@ private struct PanelNoticeRow: View {
                           actionTitle: "Forecast") { open(.forecast) }
         }
 
-        if calendar.canRequestAccess {
+        if calendar.access == .notAsked {
             return Notice(symbol: "calendar.badge.plus", tint: .accentColor, title: "Connect your calendar",
                           detail: "Log meetings in one click", actionTitle: "Connect") { calendar.requestAccess() }
         }
@@ -572,7 +596,14 @@ private struct StartList: View {
     }
 
     /// Rows beyond this scroll, so a long client list cannot stretch the panel.
-    private let visibleRows = 6
+    private var visibleRows: Int {
+        #if DEBUG
+        // With `--preview-scrolled`, a short list scrolls too, to check how its edges fade.
+        LaunchOptions.previewsScrolled ? 3 : 6
+        #else
+        6
+        #endif
+    }
     private let rowHeight: CGFloat = 40
 
     var body: some View {
@@ -634,6 +665,7 @@ private struct StartList: View {
         if count > visibleRows {
             ScrollView { VStack(spacing: 0) { content() } }
                 .frame(height: CGFloat(visibleRows) * rowHeight)
+                .softScrollEdges()
                 .padding(.horizontal, -8)
         } else {
             VStack(spacing: 0) { content() }

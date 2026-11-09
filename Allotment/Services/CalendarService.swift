@@ -22,6 +22,59 @@ struct CalendarEvent: Identifiable, Hashable, Sendable {
     func isHappening(at now: Date) -> Bool { start <= now && now < end }
 }
 
+/// Whether Allotment may read the calendars on this Mac.
+///
+///     notAsked ──you allow access──▶ granted
+///     notAsked ──you decline──▶ denied
+///     denied ──you turn it on in System Settings, then Check again──▶ granted
+enum CalendarAccess: Equatable, Sendable {
+    case notAsked
+    case granted
+    case denied
+
+    init(_ status: EKAuthorizationStatus) {
+        switch status {
+        case .fullAccess: self = .granted
+        case .notDetermined: self = .notAsked
+        // Denied, restricted and write-only access all mean events cannot be read.
+        default: self = .denied
+        }
+    }
+}
+
+/// Where one calendar event stands for logging. Worked out in one place, so the Calendar page, Log all matched
+/// and the menu bar panel always agree.
+///
+///     upcoming ──it starts──▶ happening ──it ends──▶ finished
+///     happening or finished ──Log──▶ logged
+///     upcoming, happening or finished ──Skip──▶ skipped ──Restore──▶ its time-based state again
+///
+/// Declining an event is a separate fact about the event (`CalendarEvent.isDeclined`), not a state here.
+enum CalendarEventState: Equatable, Sendable {
+    case upcoming
+    case happening
+    case finished
+    case logged
+    case skipped
+
+    init(event: CalendarEvent, at now: Date, logged: Set<String>, skipped: Set<String>) {
+        if logged.contains(event.id) {
+            self = .logged
+        } else if skipped.contains(event.id) {
+            self = .skipped
+        } else if event.start > now {
+            self = .upcoming
+        } else if event.end > now {
+            self = .happening
+        } else {
+            self = .finished
+        }
+    }
+
+    /// An event can be logged once it has started.
+    var canLog: Bool { self == .happening || self == .finished }
+}
+
 struct CalendarSource: Identifiable, Hashable, Sendable {
     let id: String
     let title: String
@@ -33,7 +86,7 @@ struct CalendarSource: Identifiable, Hashable, Sendable {
 @MainActor
 @Observable
 final class CalendarService {
-    private(set) var status: EKAuthorizationStatus
+    private(set) var access: CalendarAccess
     private(set) var calendars: [CalendarSource] = []
     /// Bumped whenever the calendar database changes, so views know to refetch.
     private(set) var revision = 0
@@ -43,8 +96,8 @@ final class CalendarService {
     @ObservationIgnored private var observer: NSObjectProtocol?
 
     init() {
-        status = EKEventStore.authorizationStatus(for: .event)
-        if hasAccess { reloadCalendars() }
+        access = CalendarAccess(EKEventStore.authorizationStatus(for: .event))
+        if access == .granted { reloadCalendars() }
         observer = NotificationCenter.default.addObserver(forName: .EKEventStoreChanged, object: eventStore, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.reloadCalendars()
@@ -52,9 +105,6 @@ final class CalendarService {
             }
         }
     }
-
-    var hasAccess: Bool { status == .fullAccess }
-    var canRequestAccess: Bool { status == .notDetermined }
 
     func requestAccess() {
         eventStore.requestFullAccessToEvents { @Sendable _, _ in
@@ -65,8 +115,8 @@ final class CalendarService {
     }
 
     func refreshStatus() {
-        status = EKEventStore.authorizationStatus(for: .event)
-        if hasAccess {
+        access = CalendarAccess(EKEventStore.authorizationStatus(for: .event))
+        if access == .granted {
             eventStore.reset()
             reloadCalendars()
             revision += 1
@@ -86,7 +136,7 @@ final class CalendarService {
     }
 
     func events(in interval: DateInterval, settings: AppSettings) -> [CalendarEvent] {
-        guard hasAccess else { return [] }
+        guard access == .granted else { return [] }
         let key = "\(interval.start.timeIntervalSince1970)|\(interval.end.timeIntervalSince1970)|\(settings.includedCalendarIDs?.sorted() ?? [])|\(settings.ignoreAllDayEvents)|\(revision)"
         if let cache, cache.key == key { return cache.events }
         let events = fetchEvents(in: interval, settings: settings)

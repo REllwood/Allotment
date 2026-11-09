@@ -87,8 +87,27 @@ struct EntryEditTarget: Identifiable, Hashable {
     var day: Date = .now
 }
 
+/// Whether Allotment opens when you log in.
+///
+///     off ──turn on──▶ on, or needsApproval when macOS wants you to allow it in System Settings › Login Items
+///     needsApproval ──you allow it there──▶ on
+///     on or needsApproval ──turn off──▶ off
 enum LoginItem {
-    static var isEnabled: Bool { SMAppService.mainApp.status == .enabled }
+    enum State: Equatable, Sendable {
+        case off
+        case on
+        case needsApproval
+
+        init(_ status: SMAppService.Status) {
+            switch status {
+            case .enabled: self = .on
+            case .requiresApproval: self = .needsApproval
+            default: self = .off
+            }
+        }
+    }
+
+    static var state: State { State(SMAppService.mainApp.status) }
 
     static func set(_ enabled: Bool) throws {
         if enabled {
@@ -96,6 +115,10 @@ enum LoginItem {
         } else {
             try SMAppService.mainApp.unregister()
         }
+    }
+
+    static func openSystemSettings() {
+        SMAppService.openSystemSettingsLoginItems()
     }
 }
 

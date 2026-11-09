@@ -40,6 +40,10 @@ struct WorkdaySubmission: Codable, Hashable, Sendable {
     var fingerprint: String
     /// Time blocks already accepted by the API, so a retry only sends what failed.
     var sentBlocks: [String] = []
+
+    /// An API send that stopped part way. Its fingerprint stays empty until every block is accepted,
+    /// which is how a partial send is saved without changing the file format.
+    var isPartial: Bool { method == .api && fingerprint.isEmpty }
 }
 
 extension WorkdaySubmission {

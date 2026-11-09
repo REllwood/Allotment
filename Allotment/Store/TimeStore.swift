@@ -1,6 +1,30 @@
 import Foundation
 import Observation
 
+/// Whether the data file is being read and written. Shown in the menu bar panel when something went wrong.
+///
+///     healthy ──file cannot be read at launch──▶ couldNotRead   (the file is moved aside, the app starts empty)
+///     any ──a save fails──▶ couldNotSave
+///     couldNotSave ──a later save works──▶ healthy
+///     couldNotRead ──you dismiss it──▶ healthy   (saving works, so it stays until you have seen it)
+enum StorageStatus: Equatable, Sendable {
+    case healthy
+    case couldNotRead(reason: String, keptAs: URL)
+    case couldNotSave(reason: String)
+
+    /// What to tell you, or nil when all is well.
+    var message: String? {
+        switch self {
+        case .healthy:
+            nil
+        case .couldNotRead(let reason, let keptAs):
+            "Your saved data could not be read (\(reason)). It was kept as \(keptAs.lastPathComponent)."
+        case .couldNotSave(let reason):
+            "Saving failed: \(reason)"
+        }
+    }
+}
+
 /// The single source of truth for clients, projects, activities, entries and settings.
 /// Data lives in one JSON file and is saved shortly after every change.
 @MainActor
@@ -10,8 +34,7 @@ final class TimeStore {
         didSet { scheduleSave() }
     }
 
-    /// Set when the data file could not be read or written.
-    var storageProblem: String?
+    private(set) var storage: StorageStatus = .healthy
 
     @ObservationIgnored let fileURL: URL?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
@@ -31,7 +54,7 @@ final class TimeStore {
             let keep = fileURL.deletingLastPathComponent().appending(path: "data.unreadable.json")
             try? FileManager.default.removeItem(at: keep)
             try? FileManager.default.moveItem(at: fileURL, to: keep)
-            storageProblem = "Your saved data could not be read (\(error.localizedDescription)). It was kept as \(keep.lastPathComponent)."
+            storage = .couldNotRead(reason: error.localizedDescription, keptAs: keep)
         }
     }
 
@@ -83,10 +106,15 @@ final class TimeStore {
         do {
             try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Self.encoder.encode(data).write(to: fileURL, options: .atomic)
-            if storageProblem?.hasPrefix("Saving failed") == true { storageProblem = nil }
+            if case .couldNotSave = storage { storage = .healthy }
         } catch {
-            storageProblem = "Saving failed: \(error.localizedDescription)"
+            storage = .couldNotSave(reason: error.localizedDescription)
         }
+    }
+
+    /// Clears a read problem once you have seen it. A save problem clears itself when saving works again.
+    func dismissStorageProblem() {
+        if case .couldNotRead = storage { storage = .healthy }
     }
 
     func exportBackup(to url: URL) throws {

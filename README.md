@@ -54,6 +54,26 @@ Run Allotment with the `--demo` argument to explore a few weeks of sample client
 xcodebuild -project Allotment.xcodeproj -scheme Allotment test
 ```
 
+## Checking the app without its windows
+
+Debug builds take a few extra arguments, for developers and coding agents that need to see the app's state without clicking through it. None of them exist in release builds.
+
+- `--state-report` prints where each of the app's state machines stands, one per line, then quits. It only reads your data. Add `--demo` to report on sample data instead.
+- `--preview-dialog` followed by `window`, `away`, `entry` or `entry-delete` opens that dialog or sheet straight away, with `--demo`.
+- `--preview-scrolled` opens every page scrolled to the bottom, to check how content fades under the toolbar, with `--demo`.
+
+For example, build a debug copy and print its state on sample data:
+
+```bash
+xcodebuild -project Allotment.xcodeproj -scheme Allotment -configuration Debug -derivedDataPath .build/DerivedData build
+```
+
+```bash
+.build/DerivedData/Build/Products/Debug/Allotment.app/Contents/MacOS/Allotment --demo --state-report
+```
+
+The state machines themselves are the types with a transition diagram in their doc comment, such as `AwayTracker`, `StorageStatus`, `WorkdayConnection`, `CalendarEventState` and `LoginItem.State`. Each has tests in `AllotmentTests/StateMachineTests.swift`.
+
 ## Sending time to Workday
 
 The Workday timesheet and the admin spreadsheet only need your clients and activities matched to Workday's time entry codes and projects, which you do once in Allotment's Workday setup. To send time straight to Workday as well, ask your Workday admin to register an API client for Allotment with:

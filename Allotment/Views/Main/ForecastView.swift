@@ -58,6 +58,7 @@ struct ForecastView: View {
             }
             .padding(24)
         }
+        .fadeUnderBars()
         .navigationTitle("Forecast")
         .toolbar {
             ToolbarItem(placement: .principal) {
