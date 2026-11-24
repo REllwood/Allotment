@@ -71,12 +71,15 @@ ditto "$BUILT" "$APP"
 # The entitlements come from the project, so nothing a debug build adds, such as get-task-allow, comes along.
 codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$SIGN_IDENTITY" "$APP"
 codesign --verify --strict --verbose=2 "$APP"
-if codesign -d --entitlements - "$APP" 2>/dev/null | grep -q "get-task-allow"; then
+# Read codesign's output first: piping it into `grep -q` under pipefail fails whenever grep finds a match early.
+ENTITLED=$(codesign -d --entitlements - "$APP" 2>/dev/null)
+SIGNATURE=$(codesign -dv "$APP" 2>&1)
+if grep -q "get-task-allow" <<< "$ENTITLED"; then
   echo "The signed app still allows debugging (get-task-allow), which Apple rejects." >&2
   exit 1
 fi
-codesign -dv "$APP" 2>&1 | grep -q "flags=0x10000(runtime)" || { echo "The hardened runtime is not on." >&2; exit 1; }
-codesign -dv "$APP" 2>&1 | grep -q "^Timestamp=" || { echo "The signature has no secure timestamp." >&2; exit 1; }
+grep -q "flags=0x10000(runtime)" <<< "$SIGNATURE" || { echo "The hardened runtime is not on." >&2; exit 1; }
+grep -q "^Timestamp=" <<< "$SIGNATURE" || { echo "The signature has no secure timestamp." >&2; exit 1; }
 echo "Architectures: $(lipo -archs "$APP/Contents/MacOS/Allotment")"
 
 # Staple the app before packaging, so both downloads carry Apple's approval even when offline.
