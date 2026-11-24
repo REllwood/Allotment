@@ -5,6 +5,7 @@ struct CalendarImportView: View {
     @Environment(TimeStore.self) private var store
     @Environment(CalendarService.self) private var calendar
     @Environment(Ticker.self) private var ticker
+    @Environment(Router.self) private var router
     @State private var date = Date.now
     /// Client choices made here for events that matched nothing, or matched the wrong client.
     @State private var overrides: [String: UUID?] = [:]
@@ -12,7 +13,7 @@ struct CalendarImportView: View {
 
     var body: some View {
         Group {
-            if calendar.access == .granted {
+            if calendar.readsEvents(store.settings) {
                 eventList
             } else {
                 accessPrompt
@@ -20,6 +21,8 @@ struct CalendarImportView: View {
         }
         .navigationTitle("Calendar")
         .navigationSubtitle(Fmt.day(date))
+        // Links are downloaded every 15 minutes anyway. Opening this page fetches any older than 5.
+        .task { await calendar.links.refresh(store.settings.calendarLinks, olderThan: 5 * 60) }
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 Button { shift(-1) } label: { Image(systemName: "chevron.left") }
@@ -28,7 +31,15 @@ struct CalendarImportView: View {
                 Button { shift(1) } label: { Image(systemName: "chevron.right") }
                     .help("Next day")
             }
-            if calendar.access == .granted {
+            ToolbarItem {
+                Button {
+                    router.addingCalendarLink = true
+                } label: {
+                    Label("Add a calendar link", systemImage: "link.badge.plus")
+                }
+                .help("Add a calendar from a link, such as your published Outlook calendar")
+            }
+            if calendar.readsEvents(store.settings) {
                 ToolbarItem {
                     Toggle(isOn: $showDismissed) {
                         Label("Show skipped", systemImage: "eye")
@@ -96,20 +107,28 @@ struct CalendarImportView: View {
                 .foregroundStyle(.tint)
             Text("Log meetings straight from your calendar")
                 .font(.title2.weight(.semibold))
-            Text("Allotment reads the calendars on this Mac, including Google and Outlook accounts added in System Settings. It matches events to clients so you can log them in one click. Nothing is uploaded and Allotment never changes your calendar.")
+            Text("Allotment reads the calendars on this Mac, including Google accounts added in System Settings. For Outlook and Teams meetings, add a link to your published calendar. Allotment matches events to clients so you can log them in one click, and it never changes your calendar.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 520)
             if calendar.access == .notAsked {
-                Button("Connect calendar") { calendar.requestAccess() }
-                    .buttonStyle(.glassProminent)
-                    .controlSize(.large)
+                HStack(spacing: 12) {
+                    Button("Connect calendar") { calendar.requestAccess() }
+                        .buttonStyle(.glassProminent)
+                    Button("Add a calendar link") { router.addingCalendarLink = true }
+                        .buttonStyle(.glass)
+                }
+                .controlSize(.large)
             } else {
                 Text("Calendar access is turned off for Allotment.")
                     .font(.callout)
-                Button("Open Privacy Settings") { calendar.openPrivacySettings() }
-                    .buttonStyle(.glass)
-                    .controlSize(.large)
+                HStack(spacing: 12) {
+                    Button("Open Privacy Settings") { calendar.openPrivacySettings() }
+                        .buttonStyle(.glass)
+                    Button("Add a calendar link") { router.addingCalendarLink = true }
+                        .buttonStyle(.glass)
+                }
+                .controlSize(.large)
                 Button("Check again") { calendar.refreshStatus() }
                     .buttonStyle(.link)
             }
@@ -155,7 +174,9 @@ private struct CalendarEventLine: View {
                 HStack(spacing: 6) {
                     Text("\(Fmt.time(event.start)) to \(Fmt.time(event.end)) · \(Fmt.hm(event.duration))")
                     if !event.calendarTitle.isEmpty { Text("· \(event.calendarTitle)") }
-                    if !event.attendeeEmails.isEmpty { Text("· \(event.attendeeEmails.count) attendees") }
+                    if !event.attendeeEmails.isEmpty {
+                        Text("· \(event.attendeeEmails.count) \(event.attendeeEmails.count == 1 ? "attendee" : "attendees")")
+                    }
                     if event.isDeclined { Text("· Declined") }
                 }
                 .font(.callout)

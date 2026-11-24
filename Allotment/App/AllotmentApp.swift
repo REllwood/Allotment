@@ -5,9 +5,9 @@ struct AllotmentApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var store: TimeStore
     @State private var ticker = Ticker()
-    @State private var calendar = CalendarService()
+    @State private var calendar: CalendarService
     @State private var router: Router
-    @State private var workdaySync = WorkdaySync(secrets: LaunchOptions.usesMemoryOnly ? MemorySecretStore() : KeychainSecretStore())
+    @State private var workdaySync: WorkdaySync
 
     init() {
         let store = TimeStore(fileURL: LaunchOptions.usesMemoryOnly ? nil : TimeStore.defaultFileURL)
@@ -16,10 +16,17 @@ struct AllotmentApp: App {
             if LaunchOptions.startsIdle { store.stopTimer() }
         }
         _store = State(initialValue: store)
+        let secrets: SecretStore = LaunchOptions.usesMemoryOnly ? MemorySecretStore() : KeychainSecretStore()
+        let calendar = CalendarService(secrets: secrets)
+        _calendar = State(initialValue: calendar)
+        let workdaySync = WorkdaySync(secrets: secrets)
+        _workdaySync = State(initialValue: workdaySync)
         let router = Router()
         if let section = LaunchOptions.section { router.selection = section }
         _router = State(initialValue: router)
         AppDelegate.store = store
+        AppDelegate.calendar = calendar
+        AppDelegate.workdaySync = workdaySync
     }
 
     var body: some Scene {
@@ -105,6 +112,13 @@ enum LaunchOptions {
     /// Development builds only: `--state-report` prints where every state machine stands, then quits.
     /// Add `--demo` to report on sample data instead of your own.
     static var printsStateReport: Bool { arguments.contains("--state-report") }
+
+    /// Development builds only, with `--demo`: `--calendar-link <link>` adds a calendar link at launch, kept in
+    /// memory like the rest of the sample data, to try calendar links without touching your Keychain.
+    static var previewCalendarLink: String? {
+        guard isDemo, let index = arguments.firstIndex(of: "--calendar-link"), index + 1 < arguments.count else { return nil }
+        return arguments[index + 1]
+    }
     #endif
 
     /// Where scroll views start: the bottom with `--preview-scrolled` in development builds, otherwise the default.
@@ -201,23 +215,36 @@ struct AllotmentCommands: Commands {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static var store: TimeStore?
+    static var calendar: CalendarService?
+    static var workdaySync: WorkdaySync?
     private var idleMonitor: IdleMonitor?
     private var windowObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if let store = Self.store {
+        if let store = Self.store, let calendar = Self.calendar {
             idleMonitor = IdleMonitor(store: store)
             idleMonitor?.start()
             #if DEBUG
-            if LaunchOptions.printsStateReport {
-                let sync = WorkdaySync(secrets: LaunchOptions.usesMemoryOnly ? MemorySecretStore() : KeychainSecretStore())
-                let report = StateReport.lines(store: store, calendar: CalendarService(), sync: sync, away: idleMonitor?.state)
-                print(report.joined(separator: "\n"))
-                fflush(stdout)
-                exit(0)
+            let previewLink = LaunchOptions.previewCalendarLink.map { address in
+                Task { await Self.addPreviewLink(address, store: store, calendar: calendar) }
+            }
+            if LaunchOptions.printsStateReport, let sync = Self.workdaySync {
+                Task {
+                    await previewLink?.value
+                    // In demo mode the links are in memory, so download each once to show whether it works now.
+                    if LaunchOptions.usesMemoryOnly {
+                        await calendar.links.refresh(store.settings.calendarLinks, olderThan: 60)
+                    }
+                    let report = StateReport.lines(store: store, calendar: calendar, sync: sync, away: idleMonitor?.state)
+                    print(report.joined(separator: "\n"))
+                    fflush(stdout)
+                    exit(0)
+                }
+                return
             }
             if LaunchOptions.previewDialog == "away" { idleMonitor?.previewPrompt() }
             #endif
+            calendar.links.keepFresh { store.settings.calendarLinks }
         }
         windowObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { _ in
             // The closing window is still visible during this notification, so check on the next turn.
@@ -226,6 +253,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
     }
+
+    #if DEBUG
+    private static func addPreviewLink(_ address: String, store: TimeStore, calendar: CalendarService) async {
+        do {
+            let (url, file) = try await calendar.links.check(address, against: store.settings.calendarLinks)
+            let link = CalendarLink(name: file.name ?? CalendarLinkAddress.suggestedName(for: url),
+                                    colorHex: Palette.next(after: store.settings.calendarLinks.map(\.colorHex)))
+            try calendar.links.add(link, url: url, file: file)
+            store.settings.calendarLinks.append(link)
+        } catch {
+            FileHandle.standardError.write(Data("Could not add the calendar link: \(error.localizedDescription)\n".utf8))
+        }
+    }
+    #endif
 
     func applicationWillTerminate(_ notification: Notification) {
         Self.store?.saveNow()

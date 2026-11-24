@@ -331,6 +331,26 @@ extension View {
     }
 }
 
+/// Pins a sheet's buttons below its scrolling content. The content fades out over a short gradient where it
+/// meets the buttons, and at the top once it scrolls, so it never stops at a hard edge. Sheets use this rather
+/// than `safeAreaBar`, which draws a hairline above the bar in sheets on macOS.
+struct SheetButtonBar<Bar: View>: ViewModifier {
+    let bar: Bar
+
+    func body(content: Content) -> some View {
+        VStack(spacing: 0) {
+            content.softScrollEdges(length: 24)
+            bar
+        }
+    }
+}
+
+extension View {
+    func sheetButtonBar<Bar: View>(@ViewBuilder _ bar: () -> Bar) -> some View {
+        modifier(SheetButtonBar(bar: bar()))
+    }
+}
+
 /// Fades scrolling content out as it passes under the toolbar or a pinned bar, so it never stops at a hard
 /// edge. Content is clear under the bar and fades in over `length` points below it. Pages start at least that
 /// far below the bar, so nothing is covered at rest. Used in the main window, where the system's soft scroll

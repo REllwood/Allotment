@@ -46,12 +46,18 @@ struct MainWindow: View {
         .sheet(item: $router.editing) { target in
             EntryEditor(target: target)
         }
+        .sheet(isPresented: $router.addingCalendarLink) {
+            CalendarLinkSheet()
+        }
         .onAppear {
             NSApp.setActivationPolicy(.regular)
             NSApp.activate()
             #if DEBUG
             if LaunchOptions.previewDialog?.hasPrefix("entry") == true, let entry = store.entries.last(where: { !$0.isRunning }) {
                 router.editing = EntryEditTarget(entryID: entry.id, day: entry.start)
+            }
+            if LaunchOptions.previewDialog == "calendar-link" {
+                router.addingCalendarLink = true
             }
             if LaunchOptions.previewDialog == "window", let client = store.clients.first {
                 dialogs.present(AppDialog(
