@@ -22,7 +22,11 @@ A macOS menu bar time tracker for client work. Start a timer for a client in one
 
 Everything is saved in one file on your Mac. There is no account and no server. Allotment reads your calendar but never changes it. It keeps Workday secrets in your Keychain and only connects to Workday when you test the connection or send time.
 
-## Requirements
+## Install
+
+Download the DMG from the [latest release](https://github.com/REllwood/Allotment/releases/latest), open it and drag Allotment into Applications. It is signed and notarised by Apple, so it opens like any other app. Allotment needs macOS 26 or later, on Apple silicon or Intel.
+
+## Requirements for building
 
 - macOS 26 or later
 - Xcode with the macOS 26 SDK (Allotment is developed with Xcode 27.2)
@@ -42,6 +46,14 @@ To build from the command line instead:
 
 ```bash
 xcodebuild -project Allotment.xcodeproj -scheme Allotment -configuration Release build
+```
+
+## Making a release
+
+`scripts/release.sh` builds Allotment for Apple silicon and Intel, signs it with a Developer ID, has Apple notarise it, and leaves a DMG, a zip and their checksums in `.build/release-artifacts/`. It needs a Developer ID Application certificate in your Keychain and a notarisation profile saved with `xcrun notarytool store-credentials`.
+
+```bash
+SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" NOTARY_PROFILE=your-profile scripts/release.sh
 ```
 
 ## Try it with sample data
