@@ -195,6 +195,8 @@ struct AppSettings: Codable, Hashable, Sendable {
     /// Calendar identifiers to read. `nil` reads every calendar.
     var includedCalendarIDs: [String]?
     var ignoreAllDayEvents = true
+    /// Calendars Allotment downloads from a link. The links themselves are kept in the Keychain.
+    var calendarLinks: [CalendarLink] = []
 
     var dailyTargetHours: Double {
         weeklyCapacityHours / Double(max(1, workdays.count))
@@ -221,7 +223,17 @@ extension AppSettings {
         userName = try c.decodeIfPresent(String.self, forKey: .userName) ?? userName
         includedCalendarIDs = try c.decodeIfPresent([String].self, forKey: .includedCalendarIDs)
         ignoreAllDayEvents = try c.decodeIfPresent(Bool.self, forKey: .ignoreAllDayEvents) ?? ignoreAllDayEvents
+        calendarLinks = try c.decodeIfPresent([CalendarLink].self, forKey: .calendarLinks) ?? []
     }
+}
+
+/// A calendar Allotment downloads from a link, such as a published Outlook calendar or a Google calendar's
+/// secret address. Anyone with the link can read the calendar, so the link lives in the Keychain, not here,
+/// and never ends up in the data file or a backup.
+struct CalendarLink: Codable, Identifiable, Hashable, Sendable {
+    var id = UUID()
+    var name: String
+    var colorHex: String
 }
 
 /// Everything Allotment stores. Saved as one JSON file in Application Support.

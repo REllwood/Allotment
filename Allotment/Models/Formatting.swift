@@ -58,6 +58,11 @@ enum Fmt {
         date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
     }
 
+    /// "at 10:42" today, otherwise "on Tue 24 Nov at 10:42".
+    static func when(_ date: Date, calendar: Calendar = .current) -> String {
+        calendar.isDateInToday(date) ? "at \(time(date))" : "on \(shortDay(date)) at \(time(date))"
+    }
+
     /// "2026-11-02" for the local calendar day. ISO 8601 format styles default to UTC, which shifts the date
     /// for anyone far from Greenwich.
     static func isoDay(_ date: Date, calendar: Calendar = .current) -> String {

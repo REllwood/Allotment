@@ -90,8 +90,8 @@ struct WorkdaySetupView: View {
         }
         .formStyle(.grouped)
         .defaultScrollAnchor(LaunchOptions.previewScrollAnchor)
-        // The form scrolls under the Done bar and fades out beneath it.
-        .safeAreaBar(edge: .bottom) {
+        // The form fades out where it meets the Done bar.
+        .sheetButtonBar {
             HStack {
                 Text("Changes are saved as you type.")
                     .font(.caption)
@@ -103,7 +103,6 @@ struct WorkdaySetupView: View {
             }
             .padding(16)
         }
-        .scrollEdgeEffectStyle(.soft, for: .all)
         .frame(width: 700, height: 580)
     }
 

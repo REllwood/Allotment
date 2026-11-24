@@ -82,28 +82,40 @@ struct CalendarSource: Identifiable, Hashable, Sendable {
     let colorHex: String
 }
 
-/// Reads calendars through EventKit. Allotment never writes to your calendar.
+/// Reads the calendars on this Mac through EventKit, and the calendar links you add, as one list of events.
+/// Allotment never writes to your calendar.
 @MainActor
 @Observable
 final class CalendarService {
     private(set) var access: CalendarAccess
     private(set) var calendars: [CalendarSource] = []
-    /// Bumped whenever the calendar database changes, so views know to refetch.
-    private(set) var revision = 0
+    /// Calendars downloaded from links, such as a published Outlook calendar.
+    @ObservationIgnored let links: CalendarLinks
+    /// Bumped whenever the calendar database changes.
+    private var eventKitRevision = 0
 
     @ObservationIgnored private let eventStore = EKEventStore()
     @ObservationIgnored private var cache: (key: String, events: [CalendarEvent])?
     @ObservationIgnored private var observer: NSObjectProtocol?
 
-    init() {
+    /// Changes whenever any calendar changes, so views know to refetch.
+    var revision: Int { eventKitRevision &+ links.revision }
+
+    init(secrets: SecretStore, downloader: CalendarDownloader = .live) {
+        links = CalendarLinks(secrets: secrets, downloader: downloader)
         access = CalendarAccess(EKEventStore.authorizationStatus(for: .event))
         if access == .granted { reloadCalendars() }
         observer = NotificationCenter.default.addObserver(forName: .EKEventStoreChanged, object: eventStore, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.reloadCalendars()
-                self?.revision += 1
+                self?.eventKitRevision += 1
             }
         }
+    }
+
+    /// Whether there are any events to read: from the Mac's calendars, or from a link.
+    func readsEvents(_ settings: AppSettings) -> Bool {
+        access == .granted || !settings.calendarLinks.isEmpty
     }
 
     func requestAccess() {
@@ -119,7 +131,7 @@ final class CalendarService {
         if access == .granted {
             eventStore.reset()
             reloadCalendars()
-            revision += 1
+            eventKitRevision += 1
         }
     }
 
@@ -136,12 +148,34 @@ final class CalendarService {
     }
 
     func events(in interval: DateInterval, settings: AppSettings) -> [CalendarEvent] {
-        guard access == .granted else { return [] }
-        let key = "\(interval.start.timeIntervalSince1970)|\(interval.end.timeIntervalSince1970)|\(settings.includedCalendarIDs?.sorted() ?? [])|\(settings.ignoreAllDayEvents)|\(revision)"
+        let key = "\(interval.start.timeIntervalSince1970)|\(interval.end.timeIntervalSince1970)|\(settings.includedCalendarIDs?.sorted() ?? [])|\(settings.ignoreAllDayEvents)|\(settings.calendarLinks.hashValue)|\(revision)|\(access)"
         if let cache, cache.key == key { return cache.events }
-        let events = fetchEvents(in: interval, settings: settings)
+        let fromMac = access == .granted ? fetchEvents(in: interval, settings: settings) : []
+        let fromLinks = settings.calendarLinks
+            .flatMap { links.events(for: $0, in: interval) }
+            .filter { !(settings.ignoreAllDayEvents && $0.isAllDay) }
+        let events = Self.merge(fromMac, fromLinks)
         cache = (key, events)
         return events
+    }
+
+    /// Puts events from the Mac's calendars and from links into one list, in start order. A meeting that comes
+    /// through both, such as an Outlook meeting that is also on the Mac, appears once, so it cannot be logged
+    /// twice. The Mac's copy wins, because it knows the attendees and whether you declined.
+    nonisolated static func merge(_ fromMac: [CalendarEvent], _ fromLinks: [CalendarEvent]) -> [CalendarEvent] {
+        var ids = Set<String>()
+        var meetings = Set<String>()
+        let sameMeeting = { (event: CalendarEvent) in
+            "\(event.title.trimmingCharacters(in: .whitespaces).lowercased())|\(event.start.timeIntervalSince1970)|\(event.end.timeIntervalSince1970)"
+        }
+        return (fromMac + fromLinks)
+            .filter { event in
+                let fresh = !ids.contains(event.id) && !meetings.contains(sameMeeting(event))
+                ids.insert(event.id)
+                meetings.insert(sameMeeting(event))
+                return fresh
+            }
+            .sorted { ($0.start, $0.title) < ($1.start, $1.title) }
     }
 
     /// Events worth drawing on a day timeline: timed ones you have not declined.

@@ -5,6 +5,7 @@ struct SettingsView: View {
     @Environment(TimeStore.self) private var store
     @Environment(CalendarService.self) private var calendar
     @Environment(DialogPresenter.self) private var dialogs
+    @Environment(Router.self) private var router
     @State private var loginItem = LoginItem.state
     /// Confirms a backup or restore that worked. Failures are shown in a dialog instead.
     @State private var dataDone: String?
@@ -113,6 +114,8 @@ struct SettingsView: View {
 
             calendarSection
 
+            calendarLinksSection
+
             ActivitiesSection()
 
             Section {
@@ -144,7 +147,7 @@ struct SettingsView: View {
             } header: {
                 Text("Your data")
             } footer: {
-                Text("Everything is stored in one file on this Mac. Nothing is sent anywhere.")
+                Text("Everything is stored in one file on this Mac, with calendar links and Workday secrets in your Keychain. Your time is only sent to Workday, and only when you send it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -213,9 +216,9 @@ struct SettingsView: View {
     private var calendarSection: some View {
         @Bindable var store = store
         Section {
+            Toggle("Ignore all-day events", isOn: $store.settings.ignoreAllDayEvents)
             switch calendar.access {
             case .granted:
-                Toggle("Ignore all-day events", isOn: $store.settings.ignoreAllDayEvents)
                 ForEach(calendar.calendars) { source in
                     Toggle(isOn: Binding(
                         get: { store.settings.includedCalendarIDs?.contains(source.id) ?? true },
@@ -247,12 +250,43 @@ struct SettingsView: View {
                 }
             }
         } header: {
-            Text("Calendar")
+            Text("Calendars on this Mac")
         } footer: {
-            Text("Allotment only reads events, and only on this Mac. Choose which calendars to show.")
+            Text("These include Google and other accounts added in System Settings › Internet Accounts. Allotment only reads events. Choose which calendars to show.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private var calendarLinksSection: some View {
+        Section {
+            ForEach(store.settings.calendarLinks) { link in
+                CalendarLinkRow(link: link) { confirmRemove(link) }
+            }
+            Button {
+                router.addingCalendarLink = true
+            } label: {
+                Label("Add a calendar link…", systemImage: "link.badge.plus")
+            }
+        } header: {
+            Text("Calendar links")
+        } footer: {
+            Text("For Outlook and Teams meetings, or any calendar published as an .ics link. Allotment downloads each link every 15 minutes and keeps it in your Keychain.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func confirmRemove(_ link: CalendarLink) {
+        dialogs.present(AppDialog(
+            symbol: "calendar.badge.minus", tone: .destructive,
+            title: "Remove \(link.name)?",
+            message: "Its meetings stop showing in Allotment, and the link is deleted from your Keychain. Time you already logged from it stays.",
+            actions: [AppDialog.Action(title: "Remove calendar", isDestructive: true) {
+                store.settings.calendarLinks.removeAll { $0.id == link.id }
+                calendar.links.remove(link)
+            }]
+        ))
     }
 
     private func exportBackup() {
@@ -283,8 +317,13 @@ struct SettingsView: View {
     }
 
     private func restore(from url: URL) {
+        let linksBefore = store.settings.calendarLinks
         do {
             try store.importBackup(from: url)
+            // Links the backup does not have are gone, so delete them from the Keychain too.
+            for link in linksBefore where !store.settings.calendarLinks.contains(where: { $0.id == link.id }) {
+                calendar.links.remove(link)
+            }
             dataDone = "Restored from \(url.lastPathComponent)."
         } catch {
             dataDone = nil
@@ -345,5 +384,39 @@ private struct ActivitiesSection: View {
         guard !name.isEmpty else { return }
         store.save(Activity(name: name, symbol: "circle.grid.cross", isBillable: true, isAdmin: false))
         newName = ""
+    }
+}
+
+/// One calendar link in Settings, with how its last download went.
+private struct CalendarLinkRow: View {
+    let link: CalendarLink
+    let remove: () -> Void
+    @Environment(TimeStore.self) private var store
+    @Environment(CalendarService.self) private var calendar
+
+    var body: some View {
+        let state = calendar.links.state(of: link)
+        let isRefreshing = calendar.links.refreshing.contains(link.id)
+        HStack(spacing: 10) {
+            ClientDot(color: Color(hex: link.colorHex))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(link.name)
+                Text(isRefreshing ? "Downloading…" : state.summary)
+                    .font(.caption)
+                    .foregroundStyle(state.isFailing && !isRefreshing ? Color.orange : Color.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button {
+                Task { await calendar.links.refresh(link) }
+            } label: {
+                Label("Download again", systemImage: "arrow.clockwise")
+                    .labelStyle(.iconOnly)
+            }
+            .disabled(isRefreshing)
+            .help("Download this calendar again now")
+            Button("Remove", action: remove)
+        }
+        .accessibilityElement(children: .contain)
     }
 }

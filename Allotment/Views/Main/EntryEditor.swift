@@ -42,9 +42,8 @@ struct EntryEditor: View {
         Group {
             if mode == .loading { ProgressView().frame(height: 300) } else { form }
         }
-        // The form scrolls under the buttons and fades out beneath them.
-        .safeAreaBar(edge: .bottom) { buttonBar }
-        .scrollEdgeEffectStyle(.soft, for: .all)
+        // The form fades out where it meets the buttons.
+        .sheetButtonBar { buttonBar }
         .frame(width: 480)
         .appDialogHost(dialogs)
         .task {

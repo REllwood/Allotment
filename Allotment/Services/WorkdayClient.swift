@@ -271,9 +271,18 @@ struct WorkdayClient {
 
 // MARK: - Secrets
 
-enum SecretKey: String, CaseIterable {
-    case clientSecret = "workday.client-secret"
-    case refreshToken = "workday.refresh-token"
+/// The name a secret is saved under in the Keychain.
+struct SecretKey: Hashable, Sendable {
+    let rawValue: String
+    /// What Keychain Access shows for the item.
+    let label: String
+
+    static let clientSecret = SecretKey(rawValue: "workday.client-secret", label: "Allotment Workday client secret")
+    static let refreshToken = SecretKey(rawValue: "workday.refresh-token", label: "Allotment Workday refresh token")
+
+    static func calendarLink(_ id: UUID) -> SecretKey {
+        SecretKey(rawValue: "calendar-link.\(id.uuidString)", label: "Allotment calendar link")
+    }
 }
 
 protocol SecretStore {
@@ -289,7 +298,7 @@ extension SecretStore {
     }
 }
 
-/// Stores Workday secrets in the login Keychain.
+/// Stores Workday secrets and calendar links in the login Keychain.
 struct KeychainSecretStore: SecretStore {
     /// Matches the bundle identifier, which keeps the app's original name so saved data and permissions carry over.
     private let service = "com.rhysellwood.TimeTraka"
@@ -321,7 +330,7 @@ struct KeychainSecretStore: SecretStore {
         guard let value, !value.isEmpty else { return }
         var item = query(key)
         item[kSecValueData as String] = Data(value.utf8)
-        item[kSecAttrLabel as String] = "Allotment Workday \(key == .clientSecret ? "client secret" : "refresh token")"
+        item[kSecAttrLabel as String] = key.label
         SecItemAdd(item as CFDictionary, nil)
     }
 }

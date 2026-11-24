@@ -10,7 +10,7 @@ A macOS menu bar time tracker for client work. Start a timer for a client in one
 
 - **Menu bar timer.** Start, stop and switch clients from the menu bar. The stopwatch icon ticks while a timer runs, so you always know you are tracking.
 - **Allocations and forecasts.** Give each client a weekly or monthly allocation. Allotment shows where you should be by now, and warns you when a client is heading over or under.
-- **Calendar.** Meetings from the calendars on your Mac, including Google and Outlook accounts, become time entries in one click.
+- **Calendar.** Meetings from the calendars on your Mac, including Google accounts, become time entries in one click. For Outlook and Teams meetings, add a link to your published calendar in Settings.
 - **Admin time.** Track internal work, such as email and planning, without a client.
 - **Reports and exports.** Totals by client, project and activity, with exports to Excel, CSV and PDF.
 - **Workday.** A timesheet laid out ready to enter in Workday, a spreadsheet for a Workday admin, or a direct sync through the Workday API.
@@ -20,7 +20,7 @@ A macOS menu bar time tracker for client work. Start a timer for a client in one
 
 ## Private by design
 
-Everything is saved in one file on your Mac. There is no account and no server. Allotment reads your calendar but never changes it. It keeps Workday secrets in your Keychain and only connects to Workday when you test the connection or send time.
+Everything is saved in one file on your Mac. There is no account and no server. Allotment reads your calendars but never changes them. It keeps calendar links and Workday secrets in your Keychain. It only goes online to download the calendar links you add, every 15 minutes, and to reach Workday when you test the connection or send time.
 
 ## Install
 
@@ -71,8 +71,9 @@ xcodebuild -project Allotment.xcodeproj -scheme Allotment test
 Debug builds take a few extra arguments, for developers and coding agents that need to see the app's state without clicking through it. None of them exist in release builds.
 
 - `--state-report` prints where each of the app's state machines stands, one per line, then quits. It only reads your data. Add `--demo` to report on sample data instead.
-- `--preview-dialog` followed by `window`, `away`, `entry` or `entry-delete` opens that dialog or sheet straight away, with `--demo`.
+- `--preview-dialog` followed by `window`, `away`, `entry`, `entry-delete` or `calendar-link` opens that dialog or sheet straight away, with `--demo`.
 - `--preview-scrolled` opens every page scrolled to the bottom, to check how content fades under the toolbar, with `--demo`.
+- `--calendar-link` followed by a link adds that calendar at launch, with `--demo`. It stays in memory, so your Keychain is never touched. With `--state-report`, the report shows whether the link downloaded.
 
 For example, build a debug copy and print its state on sample data:
 
@@ -84,7 +85,7 @@ xcodebuild -project Allotment.xcodeproj -scheme Allotment -configuration Debug -
 .build/DerivedData/Build/Products/Debug/Allotment.app/Contents/MacOS/Allotment --demo --state-report
 ```
 
-The state machines themselves are the types with a transition diagram in their doc comment, such as `AwayTracker`, `StorageStatus`, `WorkdayConnection`, `CalendarEventState` and `LoginItem.State`. Each has tests in `AllotmentTests/StateMachineTests.swift`.
+The state machines themselves are the types with a transition diagram in their doc comment, such as `AwayTracker`, `StorageStatus`, `WorkdayConnection`, `CalendarEventState`, `CalendarLinkState` and `LoginItem.State`. Each has tests in `AllotmentTests/StateMachineTests.swift` or `AllotmentTests/CalendarLinkTests.swift`.
 
 ## Sending time to Workday
 

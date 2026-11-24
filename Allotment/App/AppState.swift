@@ -79,6 +79,8 @@ final class Router {
     var timesheetDate = Date.now
     /// Set to open the entry editor. A new entry when the inner value is `nil`.
     var editing: EntryEditTarget?
+    /// Set to open the sheet that adds a calendar link.
+    var addingCalendarLink = false
 }
 
 struct EntryEditTarget: Identifiable, Hashable {

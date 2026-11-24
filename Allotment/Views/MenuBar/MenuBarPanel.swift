@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MenuBarPanel: View {
     @Environment(TimeStore.self) private var store
+    @Environment(CalendarService.self) private var calendar
     @Environment(Router.self) private var router
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismiss) private var dismiss
@@ -31,6 +32,8 @@ struct MenuBarPanel: View {
         }
         .padding(14)
         .frame(width: 340)
+        // Opening the panel fetches calendar links older than 5 minutes, so a meeting that just ended can be logged.
+        .task { await calendar.links.refresh(store.settings.calendarLinks, olderThan: 5 * 60) }
     }
 
     private var footer: some View {
@@ -515,7 +518,7 @@ private struct PanelNoticeRow: View {
         let now = ticker.minute
         var finishedMeetings: [CalendarEvent] = []
 
-        if calendar.access == .granted {
+        if calendar.readsEvents(store.settings) {
             let _ = calendar.revision
             let logged = store.loggedEventKeys
             let skipped = store.dismissedEventKeys
@@ -567,7 +570,7 @@ private struct PanelNoticeRow: View {
                           actionTitle: "Forecast") { open(.forecast) }
         }
 
-        if calendar.access == .notAsked {
+        if calendar.access == .notAsked && store.settings.calendarLinks.isEmpty {
             return Notice(symbol: "calendar.badge.plus", tint: .accentColor, title: "Connect your calendar",
                           detail: "Log meetings in one click", actionTitle: "Connect") { calendar.requestAccess() }
         }
