@@ -48,12 +48,14 @@ enum CalendarLinkAddress {
         case empty
         case notALink
         case alreadyAdded(String)
+        case notSaved
 
         var errorDescription: String? {
             switch self {
             case .empty: "Paste the calendar's link first."
             case .notALink: "That is not a web link. Copy the calendar's .ics link and paste it again."
             case .alreadyAdded(let name): "That calendar is already added, as \(name)."
+            case .notSaved: "Allotment could not save the link in your Keychain, so it was not added. Try again."
             }
         }
     }
@@ -190,9 +192,11 @@ final class CalendarLinks {
         return (url, try await downloader.file(at: url))
     }
 
-    /// Saves a link that `check` read, along with what it read.
-    func add(_ link: CalendarLink, url: URL, file: CalendarFile, at now: Date = .now) {
+    /// Saves a link that `check` read, along with what it read. Throws if the Keychain did not keep the link,
+    /// rather than seeming to work until the next launch.
+    func add(_ link: CalendarLink, url: URL, file: CalendarFile, at now: Date = .now) throws {
         secrets.set(url.absoluteString, for: .calendarLink(link.id))
+        guard secrets.contains(.calendarLink(link.id)) else { throw CalendarLinkAddress.Problem.notSaved }
         addresses[link.id] = url
         files[link.id] = file
         lastAttempt[link.id] = now

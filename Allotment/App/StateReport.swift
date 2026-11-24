@@ -31,9 +31,11 @@ enum StateReport {
     @MainActor
     private static func linkReport(_ list: [CalendarLink], links: CalendarLinks) -> String {
         guard !list.isEmpty else { return "none" }
+        let coming = DateInterval(start: .now, duration: 30 * 86_400)
         return list.map { link in
             let saved = links.hasAddress(for: link) ? "" : ", address missing"
-            return "\(link.name) \(links.state(of: link))\(saved)"
+            let count = links.events(for: link, in: coming).count
+            return "\(link.name) \(links.state(of: link)), \(count) events in the next 30 days\(saved)"
         }.joined(separator: "; ")
     }
 }

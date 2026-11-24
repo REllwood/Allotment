@@ -82,6 +82,8 @@ struct CalendarFile: Sendable {
 
     /// Reads the text of an .ics file. `localZone` is used for all-day events and times with no zone.
     static func parse(_ text: String, localZone: TimeZone = .current) throws -> CalendarFile {
+        // Some servers start the file with a byte order mark, which would hide the first BEGIN line.
+        let text = text.hasPrefix("\u{FEFF}") ? String(text.dropFirst()) : text
         let components = ContentLine.components(ContentLine.lines(in: text))
         guard let calendar = components.first(where: { $0.name == "VCALENDAR" }) else {
             let opening = text.prefix(2048).lowercased()

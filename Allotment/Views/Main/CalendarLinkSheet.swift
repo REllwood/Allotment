@@ -103,8 +103,8 @@ struct CalendarLinkSheet: View {
                     name: trimmed.isEmpty ? (file.name ?? CalendarLinkAddress.suggestedName(for: url)) : trimmed,
                     colorHex: Palette.next(after: store.settings.calendarLinks.map(\.colorHex))
                 )
+                try calendar.links.add(link, url: url, file: file)
                 store.settings.calendarLinks.append(link)
-                calendar.links.add(link, url: url, file: file)
                 dismiss()
             } catch {
                 phase = .failed(error.localizedDescription)

@@ -305,6 +305,43 @@ struct CalendarFileTests {
         #expect(found == ["Design review"])
     }
 
+    @Test func readsAFileThatStartsWithAByteOrderMark() throws {
+        let file = try CalendarFile.parse("\u{FEFF}" + CalendarFixture.google, localZone: CalendarFixture.london)
+        #expect(file.name == "Work")
+        #expect(!file.events.isEmpty)
+    }
+
+    /// About the size of a busy work calendar published from Outlook: 3,000 meetings, 300 of them repeating.
+    @Test func readsALargeCalendarQuickly() throws {
+        var lines = Array(CalendarFixture.outlook.components(separatedBy: "\r\n").prefix { $0 != "BEGIN:VEVENT" })
+        for index in 0..<3_000 {
+            let day = 1 + index % 28
+            let month = 1 + (index / 28) % 12
+            let year = 2024 + (index / 336) % 3
+            let stamp = String(format: "%04d%02d%02dT%02d0000", year, month, day, 8 + index % 9)
+            lines += ["BEGIN:VEVENT", "UID:event-\(index)", "SUMMARY:Meeting \(index)",
+                      "DTSTART;TZID=AUS Eastern Standard Time:\(stamp)",
+                      "DURATION:PT30M"]
+            if index % 10 == 0 { lines.append("RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR") }
+            lines.append("END:VEVENT")
+        }
+        lines.append("END:VCALENDAR")
+        let text = lines.joined(separator: "\r\n")
+
+        let clock = ContinuousClock()
+        var file: CalendarFile?
+        let reading = try clock.measure { file = try CalendarFile.parse(text, localZone: CalendarFixture.london) }
+        var found: [CalendarFile.Occurrence] = []
+        let day = clock.measure { found = file!.occurrences(in: CalendarFixture.interval("2026-11-24T13:00:00Z", "2026-11-25T13:00:00Z")) }
+        let week = clock.measure { _ = file!.occurrences(in: CalendarFixture.interval("2026-11-22T13:00:00Z", "2026-11-29T13:00:00Z")) }
+        print("Large calendar: read in \(reading), one day in \(day), one week in \(week), \(found.count) meetings that day")
+        #expect(file?.events.count == 3_000)
+        // Nearly all of the 300 repeating meetings started before this Wednesday, so they fall on it.
+        #expect(found.count >= 250)
+        #expect(reading < .seconds(3))
+        #expect(day < .milliseconds(500))
+    }
+
     @Test func recognisesWebPagesAndOtherFiles() {
         #expect(throws: CalendarFile.Problem.webPage) {
             try CalendarFile.parse("<!DOCTYPE html><html><body>Calendar</body></html>")
@@ -401,7 +438,7 @@ struct CalendarLinksTests {
     func addedLink(_ links: CalendarLinks) async throws -> CalendarLink {
         let (url, file) = try await links.check("webcal://calendar.example.com/work.ics", against: [])
         let link = CalendarLink(name: file.name ?? "Calendar", colorHex: "#3B82F6")
-        links.add(link, url: url, file: file)
+        try links.add(link, url: url, file: file)
         return link
     }
 
@@ -460,6 +497,14 @@ struct CalendarLinksTests {
         #expect(!links.hasAddress(for: link))
     }
 
+    @Test func refusesALinkTheKeychainDidNotKeep() async throws {
+        let links = CalendarLinks(secrets: ForgetfulSecretStore(), downloader: server.downloader)
+        let (url, file) = try await links.check("https://calendar.example.com/work.ics", against: [])
+        let link = CalendarLink(name: "Work", colorHex: "#3B82F6")
+        #expect(throws: CalendarLinkAddress.Problem.notSaved) { try links.add(link, url: url, file: file) }
+        #expect(links.events(for: link, in: week).isEmpty)
+    }
+
     @Test func explainsAWebPageLink() async {
         server.answer(status: 200, body: "<!doctype html><html></html>")
         let links = CalendarLinks(secrets: secrets, downloader: server.downloader)
@@ -467,6 +512,12 @@ struct CalendarLinksTests {
             try await links.check("https://calendar.example.com/page", against: [])
         }
     }
+}
+
+/// A Keychain that never keeps anything, as when a save fails.
+struct ForgetfulSecretStore: SecretStore {
+    func value(for key: SecretKey) -> String? { nil }
+    func set(_ value: String?, for key: SecretKey) {}
 }
 
 struct CalendarMergeTests {

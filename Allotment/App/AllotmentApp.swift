@@ -260,8 +260,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let (url, file) = try await calendar.links.check(address, against: store.settings.calendarLinks)
             let link = CalendarLink(name: file.name ?? CalendarLinkAddress.suggestedName(for: url),
                                     colorHex: Palette.next(after: store.settings.calendarLinks.map(\.colorHex)))
+            try calendar.links.add(link, url: url, file: file)
             store.settings.calendarLinks.append(link)
-            calendar.links.add(link, url: url, file: file)
         } catch {
             FileHandle.standardError.write(Data("Could not add the calendar link: \(error.localizedDescription)\n".utf8))
         }
